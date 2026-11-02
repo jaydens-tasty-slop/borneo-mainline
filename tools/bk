@@ -71,9 +71,21 @@ install -m 0755 "$BUSYBOX" "$OUT/rootfs/bin/busybox"
 if [[ -d $ROOT/build/fw/rootfs ]]; then
 	cp -r "$ROOT/build/fw/rootfs/." "$OUT/rootfs/"
 fi
+# The kernel's index of built-in modules, which modprobe needs. init gives it to a root on the card.
+REL=$(cat "$OBJ/include/config/kernel.release")
+STAGE=$OUT/modules-stage
+rm -rf "$STAGE"
+mkdir -p "$STAGE/lib/modules/$REL" "$OUT/rootfs/modules"
+cp "$OBJ/modules.builtin" "$OBJ/modules.builtin.modinfo" "$STAGE/lib/modules/$REL/"
+: >"$STAGE/lib/modules/$REL/modules.order"
+depmod -b "$STAGE" -m /lib/modules "$REL"
+find "$STAGE" -name 'modules.*' ! -name modules.builtin.modinfo -exec cp -t "$OUT/rootfs/modules/" {} +
 (cd "$OUT/rootfs" && find . | cpio --quiet -o -H newc --owner=0:0) >"$OUT/initramfs.cpio"
 
 "$ROOT/tools/mkimg" --kernel "$OUT/Image.stub" --dtb "$DTB" \
 	--ramdisk "$OUT/initramfs.cpio" --cmdline "$CMDLINE" -o "$OUT/borneo.img"
+# The same image, booting the postmarketOS root that tools/mkpmos makes on the microSD card.
+"$ROOT/tools/mkimg" --kernel "$OUT/Image.stub" --dtb "$DTB" \
+	--ramdisk "$OUT/initramfs.cpio" --cmdline "$CMDLINE bh.root=pmos.ext4" -o "$OUT/borneo-pmos.img"
 rm -rf "$ROOT/tools/__pycache__"
 ls -la "$OUT/borneo.img" "$IMAGE" | awk '{print $5, $9}'

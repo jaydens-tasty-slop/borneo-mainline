@@ -54,7 +54,7 @@ static int from_reader = -1;
 static int activity_fd = -1;
 static pid_t reader_pid;
 
-static char *const shell_env[] = { "PATH=/bin:/sbin", "HOME=/", "TERM=dumb", NULL };
+static char *const shell_env[] = { "PATH=/usr/sbin:/usr/bin:/sbin:/bin", "HOME=/root", "TERM=dumb", NULL };
 
 static void ignore_sigpipe(int ignore)
 {
@@ -643,7 +643,8 @@ static int gadget_start(const char *serial)
 	static char udc[128];
 	int ep0;
 
-	if (mount("configfs", "/sys/kernel/config", "configfs", 0, ""))
+	/* Under systemd it's already mounted, which leaves EBUSY. */
+	if (mount("configfs", "/sys/kernel/config", "configfs", 0, "") && errno != EBUSY)
 		return -1;
 	mkdir(GADGET, 0755);
 	put(GADGET "/idVendor", "0x18d1");
