@@ -38,6 +38,14 @@ series pmdomain-fixes
 pmdomain: core: Free subdomain links outside the genpd locks
 pmdomain: core: Wait for a genpd's device links before it can be freed
 
+series cpuidle-name-leak
+cpuidle: psci: Free the name of a PM domain when removing it
+cpuidle: riscv-sbi: Free the name of a PM domain when removing it
+
+series leds-qcom-flash-fixes
+leds: flash: leds-qcom-flash: Keep the mutex until the LEDs are gone
+leds: flash: leds-qcom-flash: Release the V4L2 flash devices properly
+
 series smbx-epc-sem
 power: supply: qcom_smbx: Don't go through the core to read the status
 
@@ -138,9 +146,11 @@ dt-bindings: power: supply: drop the type refs the unit suffixes already imply
 power: supply: qcom_smbx: learn what the pack actually holds
 dt-bindings: power: supply: qcom,pmi8998-charger: Allow the PMI632's interrupts
 power: supply: qcom_smbx: Scale the PMI632's input current
+power: supply: qcom_smbx: Initialize the gauge's lock before using it
 
 series flash-led
 hold László Lajosházi's patches: their author needs contacting
+needs leds-qcom-flash-fixes
 needs lcdb
 needs charger
 dt-bindings: leds: qcom,spmi-flash-led: add the PMI632
