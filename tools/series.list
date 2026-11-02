@@ -1,0 +1,181 @@
+# How linux/ borneo/dev splits into upstream series, read by tools/mkseries.
+#
+#   series NAME          starts a series
+#   hold REASON          mkseries reports it as not ready to send, and says why
+#   needs NAME           apply that series first, without emitting its patches
+#   SUBJECT              a commit on borneo/dev, by subject, in applying order
+#
+# Every commit on the branch has to appear here exactly once, so nothing gets forgotten.
+
+# Fixes that stand alone, each to its own maintainers.
+
+series asoc-q6-fixes
+ASoC: qcom: q6asm-dai: Report 24-bit PCM as S32_LE
+ASoC: qcom: q6dsp-lpass-clocks: Set drvdata before registering clocks
+
+series bt-hci-qca-retry
+Bluetooth: hci_qca: Leave the chip off for a while before retrying
+
+series ath10k-assoc-bw
+wifi: ath10k: Handle a channel change before the vdev is up
+
+series input-pm8xxx-vib
+Input: pm8xxx-vibrator - Write the voltage's high bits
+
+series msm-dsi-phy-sleep
+drm/msm/dsi: Suspend the PHY during system sleep
+
+series watchdog-qcom-sleep
+watchdog: qcom: Stop during system sleep if running but not opened
+
+series glink-smem-wake
+rpmsg: glink: smem: Allow messages to wake the system
+
+series gcc-sm6115-usb
+clk: qcom: gcc-sm6115: Use retention for USB power domain
+
+# SM6115, each independent of the board.
+
+series sm6115-dispcc-ao
+dt-bindings: clock: qcom,sm6115-dispcc: Add the active-only XO
+clk: qcom: dispcc-sm6115: Run the AHB clock from the active-only XO
+arm64: dts: qcom: sm6115: Give dispcc the active-only XO
+
+series sm6115-mdss-ahb
+dt-bindings: display: msm: qcom,sm6115-mdss: Add the dispcc AHB clock
+arm64: dts: qcom: sm6115: Give MDSS the display AHB clock
+
+series sm6115-power
+arm64: dts: qcom: sm6115: Fix CPU cluster idle state parameters
+arm64: dts: qcom: sm6115: Hook up MPM
+arm64: dts: qcom: sm6115: Add a system power domain
+arm64: dts: qcom: sm6115: Add RPM master stats
+
+series sm6115-ipa
+dt-bindings: net: qcom,ipa: Add SM6115
+arm64: dts: qcom: sm6115: Add IPA
+
+series sm6115-audio
+hold Klimov's and Dybcio's patches are theirs: check whether they are still working on them
+arm64: dts: qcom: sm6115: Set up CPU cooling maps
+arm64: dts: qcom: sm6115: add LPASS devices
+arm64: dts: qcom: sm4250: add description of soundwire and dmic pins
+arm64: dts: qcom: sm6115: Use the VA macro's own compatible
+
+# Drivers.
+
+series panel-ft8009
+dt-bindings: display: panel: Add DJN FT8009
+drm/panel: Add DJN FT8009 panel driver
+
+series moto-smem-board
+hold New driver with a Motorola-only reason to exist: needs the user's view on how to pitch it
+soc: qcom: Add a driver to tell Motorola's modem which board it's on
+
+# Other people's work, with what this board needed on top.
+
+series aw99703
+hold Luka Panio's series: they promised a v2
+dt-bindings: leds: backlight: Add Awinic AW99703 backlight
+backlight: Add Awinic AW99703 backlight driver
+
+series lcdb
+hold Noxwell's patch has no Signed-off-by, and my rewrite should be squashed into it with their agreement
+regulator: add Qualcomm PMI632 LCDB driver
+regulator: qcom-lcdb: Follow the vendor's power sequence
+dt-bindings: mfd: qcom,spmi-pmic: Add LCDB regulators
+arm64: dts: qcom: pmi632: Add LCDB regulators
+
+series touch-edt
+hold Luka Panio's series: they promised a v2, and FT8009 follows whatever hooks it ends up with
+Input: edt-ft5x06 - split the bus independent core from the I2C driver
+Input: edt-ft5x06 - move the controller bring-up into a helper
+Input: edt-ft5x06 - add an optional controller boot hook
+Input: edt-ft5x06 - allow a chip specific touch data register
+dt-bindings: input: touchscreen: edt-ft5x06: Add FocalTech FT8722
+Input: edt-ft5x06 - add SPI transport and FT8722 support
+Input: edt-ft5x06 - support following a DRM panel
+dt-bindings: input: touchscreen: edt-ft5x06: Add FocalTech FT8009
+Input: edt-ft5x06 - add FocalTech FT8009 support
+
+series charger
+hold László Lajosházi's series and its fp3 fixes: their authors need contacting
+iio: adc: qcom-spmi-adc5: add the BAT_THERM channel
+dt-bindings: power: supply: qcom,pmi8998-charger: add the PMI632
+power: supply: qcom_smbx: add support for the PMI632 charger
+power: supply: qcom_smbx: program the JEITA limits from the battery
+power: supply: qcom_smbx: expose the fast-charge current as a cooling device
+power: supply: qcom_smbx: take the fast-charge current from the battery
+power: supply: qcom_smbx: verify the battery ID before applying its limits
+arm64: dts: qcom: pmi632: add the SMB5 charger
+power: supply: qcom_smbx: gauge the battery from the PMIC's QG samples
+power: supply: qcom_smbx: decode the charge status per generation
+power: supply: qcom_smbx: only call a terminated charge full
+power: supply: qcom_smbx: hold the pack full while the charger says it is
+power: supply: qcom_smbx: restart a finished charge on pmi632
+power: supply: qcom_smbx: do not read the OCV table while the charger drives
+power: supply: qcom_smbx: correct the fuel gauge from rested readings only
+arm64: dts: qcom: pmi632: wire the QG good-OCV interrupt
+power: supply: qcom_smbx: complete the charge-end path and report more of it
+arm64: dts: qcom: pmi632: describe the charger's interrupts, and fix one
+power: supply: qcom_smbx: let the charger terminate a charge on SMB5
+power: supply: qcom_smbx: do not forget a charge because the input blinked
+power: supply: qcom_smbx: report how much charge the pack holds
+dt-bindings: power: supply: battery: add id-resistor-ohms
+dt-bindings: power: supply: qcom,pmi8998-charger: describe the charging policy
+power: supply: qcom_smbx: read the charging policy from the charger node
+dt-bindings: power: supply: drop the type refs the unit suffixes already imply
+power: supply: qcom_smbx: learn what the pack actually holds
+dt-bindings: power: supply: qcom,pmi8998-charger: Allow the PMI632's interrupts
+power: supply: qcom_smbx: Scale the PMI632's input current
+
+series flash-led
+hold László Lajosházi's patches: their author needs contacting
+needs lcdb
+needs charger
+dt-bindings: leds: qcom,spmi-flash-led: add the PMI632
+leds: flash: leds-qcom-flash: support the two-channel PMI632
+arm64: dts: qcom: pmi632: Add the flash LED controller
+
+series aw882xx
+hold Filippo Falezza's driver: the speaker is still silent here, so nothing to report yet
+ASoC: codecs: Add Awinic AW882xx amplifier driver
+
+# Upstream already has this one; it goes when the base includes it.
+
+series qrtr-carried
+hold Already in netdev/net as 743b5c86276b: drop on rebase, nothing to send
+net: qrtr: announce local services again once our HELLO is sent
+
+# The board. Every commit here depends on some of the above, and the sort is to be squashed.
+
+series borneo
+hold Goes last, squashed per what has landed by then. Needs everything above
+needs aw99703
+needs lcdb
+needs panel-ft8009
+needs touch-edt
+needs charger
+needs flash-led
+needs sm6115-audio
+needs sm6115-ipa
+needs sm6115-mdss-ahb
+needs sm6115-dispcc-ao
+needs sm6115-power
+needs moto-smem-board
+dt-bindings: arm: qcom: Add Motorola Moto G Power (2021)
+arm64: dts: qcom: Add Motorola Moto G Power (2021)
+arm64: dts: qcom: sm6115-motorola-borneo: Enable the display
+arm64: dts: qcom: sm6115-motorola-borneo: Enable the GPU and video codec
+arm64: dts: qcom: sm6115-motorola-borneo: Don't depend on the USB pipe clock
+arm64: dts: qcom: sm6115-motorola-borneo: Enable the remote processors and WiFi
+arm64: dts: qcom: sm6115-motorola-borneo: Enable Bluetooth, set WiFi rails
+arm64: dts: qcom: sm6115-motorola-borneo: Add the touchscreen
+arm64: dts: qcom: sm6115-motorola-borneo: Enable charging
+arm64: dts: qcom: sm6115-motorola-borneo: Give the disks fixed names
+arm64: dts: qcom: sm6115-motorola-borneo: Enable the vibrator
+arm64: dts: qcom: sm6115-motorola-borneo: Add the flash LED
+arm64: dts: qcom: sm6115-motorola-borneo: Add the codec, mics and earpiece
+arm64: dts: qcom: sm6115-motorola-borneo: Enable IPA
+arm64: dts: qcom: sm6115-motorola-borneo: Add the notification LED
+arm64: dts: qcom: sm6115-motorola-borneo: Sort nodes and properties

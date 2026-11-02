@@ -3,6 +3,7 @@
 #
 #   tools/bk                 build the kernel, stub, initramfs and boot image
 #   tools/bk --dtbs          also run the upstream checks on the board DT
+#   BK_VARIANT=debug tools/bk  the same with tools/borneo-debug.config on top, in build/debug
 #
 # Output is build/dev/borneo.img. Dev-only behaviour lives here, in tools/stub and in
 # tools/borneo-dev.config, so that linux/ only ever holds what could go upstream.
@@ -10,7 +11,12 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SRC=$ROOT/linux
-OUT=$ROOT/build/dev
+VARIANT=${BK_VARIANT:-dev}
+OUT=$ROOT/build/$VARIANT
+FRAGMENTS=("$ROOT/tools/borneo-dev.config")
+if [[ $VARIANT != dev ]]; then
+	FRAGMENTS+=("$ROOT/tools/borneo-$VARIANT.config")
+fi
 OBJ=$OUT/obj
 BOARD=sm6115-motorola-borneo
 DTB=$OBJ/arch/arm64/boot/dts/qcom/$BOARD.dtb
@@ -34,10 +40,14 @@ if [[ ! -x $BUSYBOX ]]; then
 	exit 1
 fi
 
-if [[ ! -f $OBJ/.config || $ROOT/tools/borneo-dev.config -nt $OBJ/.config ]]; then
+stale=
+for f in "${FRAGMENTS[@]}"; do
+	[[ $f -nt $OBJ/.config ]] && stale=1
+done
+if [[ ! -f $OBJ/.config || -n $stale ]]; then
 	"${MAKE[@]}" defconfig
 	"$SRC/scripts/kconfig/merge_config.sh" -m -O "$OBJ" "$OBJ/.config" \
-		"$ROOT/tools/borneo-dev.config" | grep -E '^(Value|Previous|New|WARNING)' || true
+		"${FRAGMENTS[@]}" | grep -E '^(Value|Previous|New|WARNING)' || true
 	"${MAKE[@]}" olddefconfig
 fi
 

@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""mkseries: cut linux/ borneo/dev into the upstream series listed in tools/series.list.
+
+  tools/mkseries --check          every commit listed exactly once? No tree is touched.
+  tools/mkseries [NAME ...]       build those series (default: all not on hold)
+  tools/mkseries --all            build the held series too
+  tools/mkseries --base REV ...   apply to REV instead of v7.4-rc1 (say next/master)
+
+For each series, in a throwaway worktree: cherry-pick its commits alone onto the base, strip the
+trailers upstream doesn't want, and write what comes out to build/series/NAME/ with checkpatch and
+get_maintainer results. A local branch send/NAME is left in linux/ for the user to review and sign
+off. Nothing is signed off and nothing is sent: that's the user's part.
+"""
+import argparse
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+LINUX = ROOT / "linux"
+OUT = ROOT / "build" / "series"
+WT = ROOT / "build" / "series-wt"
+LIST = ROOT / "tools" / "series.list"
+DEV = "borneo/dev"
+RANGE_BASE = "v7.4-rc1"
+ME = "Jayden Milne <linux@jayd.ml>"
+# Upstream dropped Assisted-by in 1e035297ffda: tool use goes in the cover letter or changelog text.
+STRIP = re.compile(r"^(Co-Authored-By|Assisted-by):", re.I)
+IDENT = {
+    "GIT_COMMITTER_NAME": "Jayden Milne",
+    "GIT_COMMITTER_EMAIL": "linux@jayd.ml",
+}
+
+
+def git(*args, cwd=LINUX, check=True, env=None):
+    e = dict(os.environ, **(env or {}))
+    r = subprocess.run(["git", *args], cwd=cwd, env=e, text=True, capture_output=True)
+    if check and r.returncode:
+        sys.exit(f"git {' '.join(args)}: {r.stderr.strip()}")
+    return r
+
+
+def load():
+    series, cur = {}, None
+    for n, line in enumerate(LIST.read_text().splitlines(), 1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        word, _, rest = line.partition(" ")
+        if word == "series":
+            cur = series[rest] = {"name": rest, "hold": None, "needs": [], "subjects": []}
+        elif cur is None:
+            sys.exit(f"series.list:{n}: nothing before the first series")
+        elif word == "hold":
+            cur["hold"] = rest
+        elif word == "needs":
+            cur["needs"].append(rest)
+        else:
+            cur["subjects"].append(line)
+    return series
+
+
+def commits():
+    out = git("log", "--reverse", "--format=%H%x00%s", f"{RANGE_BASE}..{DEV}").stdout
+    return [tuple(line.split("\0", 1)) for line in out.splitlines()]
+
+
+def check(series, log):
+    """Every commit in exactly one series, every subject a real commit, in branch order."""
+    bad = 0
+    have = {}
+    for h, s in log:
+        if s in have:
+            print(f"two commits share a subject: {s}")
+            bad += 1
+        have[s] = h
+    order = {s: i for i, (_, s) in enumerate(log)}
+    seen = {}
+    for sr in series.values():
+        last = -1
+        for s in sr["subjects"]:
+            if s not in have:
+                print(f"{sr['name']}: no such commit: {s}")
+                bad += 1
+                continue
+            if s in seen:
+                print(f"{sr['name']}: already in {seen[s]}: {s}")
+                bad += 1
+            seen[s] = sr["name"]
+            if order[s] < last:
+                print(f"{sr['name']}: out of branch order: {s}")
+            last = max(last, order[s])
+        for n in sr["needs"]:
+            if n not in series:
+                print(f"{sr['name']}: needs unknown series {n}")
+                bad += 1
+    for s in have:
+        if s not in seen:
+            print(f"in no series: {s}")
+            bad += 1
+    return bad
+
+
+def closure(series, name, done=None):
+    done = [] if done is None else done
+    for n in series[name]["needs"]:
+        closure(series, n, done)
+    if name not in done:
+        done.append(name)
+    return done
+
+
+def strip_message(msg):
+    lines = [ln for ln in msg.splitlines() if not STRIP.match(ln)]
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\n".join(lines) + "\n"
+
+
+def pick(hash_, env):
+    """Cherry-pick with the trailers gone. Returns an error text, or None."""
+    r = git("cherry-pick", hash_, cwd=WT, check=False, env=env)
+    if r.returncode:
+        files = git("diff", "--name-only", "--diff-filter=U", cwd=WT, check=False).stdout.split()
+        git("cherry-pick", "--abort", cwd=WT, check=False)
+        # No conflicted file means an empty pick: the base already has this change.
+        return "conflict in " + ", ".join(files) if files else "already in the base, or: " + r.stderr.strip()[:160]
+    msg = strip_message(git("log", "-1", "--format=%B", cwd=WT).stdout)
+    p = subprocess.run(["git", "commit", "--amend", "--no-verify", "-q", "-F", "-"],
+                       cwd=WT, env=dict(os.environ, **env), input=msg, text=True, capture_output=True)
+    if p.returncode:
+        return "amend failed: " + p.stderr.strip()[:200]
+    return None
+
+
+def run_checks(d, patches):
+    """checkpatch per patch; a missing Signed-off-by is expected here and counted apart."""
+    env = dict(os.environ, PATH=os.path.expanduser("~/.local/bin") + ":" + os.environ["PATH"])
+    report = []
+    worst = 0
+    for p in patches:
+        r = subprocess.run(["scripts/checkpatch.pl", "--strict", "--no-summary", "--terse", str(p)],
+                           cwd=WT, env=env, text=True, capture_output=True)
+        lines = [ln.split(str(p) + ":", 1)[-1] for ln in r.stdout.splitlines() if ln.strip()]
+        lines = [ln for ln in lines if "Missing Signed-off-by" not in ln]
+        if lines:
+            report.append(f"--- {p.name}")
+            report += lines
+            worst += sum(1 for ln in lines if "ERROR" in ln or "WARNING" in ln)
+    (d / "checkpatch.txt").write_text("\n".join(report) + "\n")
+    return worst
+
+
+def run_maintainers(d, patches):
+    r = subprocess.run(["scripts/get_maintainer.pl", "--no-rolestats", "--no-git-fallback", *map(str, patches)],
+                       cwd=WT, text=True, capture_output=True)
+    (d / "to-cc.txt").write_text(r.stdout)
+    return len(r.stdout.splitlines())
+
+
+def build(series, name, base, log):
+    sr = series[name]
+    by_subject = {s: h for h, s in log}
+    env = IDENT
+    d = OUT / name
+    shutil.rmtree(d, ignore_errors=True)
+    d.mkdir(parents=True)
+
+    git("checkout", "-q", "-f", "--detach", base, cwd=WT)
+    git("clean", "-fdq", cwd=WT)
+    for dep in closure(series, name)[:-1]:
+        for s in series[dep]["subjects"]:
+            err = pick(by_subject[s], env)
+            if err:
+                return f"prerequisite {dep}, {s}: {err}"
+    start = git("rev-parse", "HEAD", cwd=WT).stdout.strip()
+    for s in sr["subjects"]:
+        err = pick(by_subject[s], env)
+        if err:
+            return f"{s}: {err}"
+    git("branch", "-f", f"send/{name}", "HEAD", cwd=WT)
+    n = len(sr["subjects"])
+    args = ["format-patch", "-q", f"--from={ME}", f"--base={start}", "-o", str(d), f"{start}..HEAD"]
+    if n > 1:
+        args.insert(1, "--cover-letter")
+    git(*args, cwd=WT)
+    patches = sorted(p for p in d.glob("*.patch") if not p.name.startswith("0000-"))
+    warned = run_checks(d, patches)
+    people = run_maintainers(d, patches)
+    hold = f", HOLD: {sr['hold']}" if sr["hold"] else ""
+    return f"{n} patches, checkpatch issues {warned}, {people} recipients{hold}"
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--check", action="store_true")
+    ap.add_argument("--all", action="store_true")
+    ap.add_argument("--base", default=RANGE_BASE)
+    ap.add_argument("names", nargs="*")
+    a = ap.parse_args()
+
+    series = load()
+    log = commits()
+    bad = check(series, log)
+    if a.check or bad:
+        print(f"{len(log)} commits, {len(series)} series, {bad} problems")
+        sys.exit(1 if bad else 0)
+
+    names = a.names or [n for n, s in series.items() if a.all or not s["hold"]]
+    for n in names:
+        if n not in series:
+            sys.exit(f"no series named {n}")
+    git("worktree", "remove", "--force", str(WT), check=False)
+    git("worktree", "prune", check=False)
+    git("worktree", "add", "-q", "--detach", str(WT), a.base)
+    try:
+        for n in names:
+            print(f"{n}: {build(series, n, a.base, log)}", flush=True)
+    finally:
+        git("worktree", "remove", "--force", str(WT), check=False)
+
+
+if __name__ == "__main__":
+    main()
