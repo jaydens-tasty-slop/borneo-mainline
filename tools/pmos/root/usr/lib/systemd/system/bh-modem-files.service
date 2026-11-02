@@ -1,0 +1,13 @@
+[Unit]
+Description=Copy the modem's files from the eMMC into RAM
+DefaultDependencies=no
+After=systemd-udevd.service local-fs.target
+Before=basic.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/bh-modem-files
+
+[Install]
+WantedBy=basic.target

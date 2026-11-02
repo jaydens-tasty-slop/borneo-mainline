@@ -1,0 +1,50 @@
+#!/bin/sh
+# The modem's disk, rmtfs, is given copies of its partitions held in RAM, and its other store,
+# tqftpserv's read-write directory, gets the same treatment. Each boot reads them from the eMMC
+# again, and whatever the modem writes is gone at the next boot, so nothing can reach the real
+# modemst1/2, fsg, fsc and persist. Nor are copies of them left on the card, which can be removed.
+# See tools/wifiup, where this started.
+set -eu
+# systemd's default PATH leaves out /bin, where busybox's applets are.
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+R=/run/rmtfs
+W=/run/modem-rw
+T=/run/modem-tmp
+mkdir -p "$R" "$W" "$T" /var/lib/tqftpserv
+chmod 700 "$R" "$W" "$T"
+
+# By the disk's type and the partition's name, never by a disk's number.
+part() {
+	for p in /sys/class/block/mmcblk*p*; do
+		d=${p##*/}
+		disk=${d%p*}
+		[ "$(cat "/sys/block/$disk/device/type" 2>/dev/null)" = MMC ] || continue
+		if grep -q "^PARTNAME=$1\$" "$p/uevent"; then
+			echo "/dev/$d"
+			return 0
+		fi
+	done
+	echo "no $1 partition" >&2
+	return 1
+}
+
+for d in /sys/block/mmcblk*; do
+	if [ "$(cat "$d/device/type" 2>/dev/null)" = MMC ] && [ "$(cat "$d/ro")" != 1 ]; then
+		echo "the eMMC is writable, stopping" >&2
+		exit 1
+	fi
+done
+
+dd if="$(part modemst1)" of="$R/modem_fs1" bs=1M 2>/dev/null
+dd if="$(part modemst2)" of="$R/modem_fs2" bs=1M 2>/dev/null
+dd if="$(part fsc)" of="$R/modem_fsc" bs=1M 2>/dev/null
+
+# debugfs only reads the device: no mount, so no journal to replay. fsg holds one gzipped image
+# per radio variant. Motorola's rmt_storage serves the phone's own.
+debugfs -R "dump /borneo_nanh.img.gz $T/fsg.gz" "$(part fsg_a)" 2>/dev/null
+gzip -dc "$T/fsg.gz" > "$R/modem_fsg"
+debugfs -R "rdump /rfs/msm/mpss $T" "$(part persist)" 2>/dev/null
+cp -a "$T/mpss/." "$W/"
+rm -rf "$T"
+mount --bind "$W" /var/lib/tqftpserv

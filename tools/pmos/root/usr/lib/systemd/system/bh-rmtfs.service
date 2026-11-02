@@ -1,0 +1,13 @@
+[Unit]
+Description=Modem storage, served from copies in RAM
+After=bh-modem-files.service
+Requires=bh-modem-files.service
+
+[Service]
+# Never -P: that would be the real partitions.
+ExecStart=/usr/bin/rmtfs -o /run/rmtfs -v
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

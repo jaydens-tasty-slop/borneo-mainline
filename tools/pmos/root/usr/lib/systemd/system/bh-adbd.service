@@ -1,0 +1,14 @@
+[Unit]
+Description=adb over USB for bring-up
+DefaultDependencies=no
+After=sys-kernel-config.mount
+Wants=sys-kernel-config.mount
+Before=sysinit.target
+
+[Service]
+ExecStart=/usr/local/sbin/bh-adbd
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=sysinit.target

@@ -1,0 +1,16 @@
+#!/bin/sh
+# Motorola's modem wants its files already being served when it starts.
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+sleep 1
+for r in /sys/class/remoteproc/remoteproc*; do
+	if [ "$(cat "$r/state")" != running ]; then
+		echo start > "$r/state" || echo "$(cat "$r/name"): failed to start"
+	fi
+	echo "$(cat "$r/name"): $(cat "$r/state")"
+done
+# A message from the modem has to be able to wake the phone for calls and texts to reach it.
+for w in /sys/devices/platform/soc@0/*.remoteproc/*.remoteproc:glink-edge/power/wakeup \
+	 /sys/devices/platform/soc@0/*.remoteproc:glink-edge/power/wakeup; do
+	[ -e "$w" ] && echo enabled > "$w"
+done
+exit 0

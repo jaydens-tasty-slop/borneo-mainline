@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# mkpmos: build a postmarketOS root with Plasma Mobile in /sd/pmos.ext4 on the phone's microSD card.
+#
+#   tools/mkpmos            start the build on a phone running build/dev/borneo.img, and leave it
+#                           running: it logs to /sd/mkpmos.log, and finishes with "=== ... done"
+#
+# Then boot it with tools/bh boot build/dev/borneo-pmos.img.
+#
+# apk runs on the phone, from the Alpine chroot, so nothing downloaded here runs on this host.
+# build/wifi.txt goes to the phone without being read, and isn't logged: the phone removes its
+# copy of it from /sd once it has written NetworkManager's config.
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+export ANDROID_SERIAL=${ANDROID_SERIAL:-<serial>}
+KEYS=$ROOT/build/dl/pmos-index/keys
+OUT=$ROOT/build/pmos
+FW=$ROOT/build/fw
+
+"$ROOT/tools/wifiup" --join >/dev/null
+
+mkdir -p "$OUT"
+tar -C "$FW/sd/lib" -cf "$OUT/firmware.tar" firmware
+tar -C "$FW/rootfs/lib" -rf "$OUT/firmware.tar" firmware
+tar -C "$ROOT/tools/pmos/root" --owner=0 --group=0 -cf "$OUT/config.tar" .
+
+adb shell date -u -s "@$(date -u +%s)" >/dev/null
+adb shell 'mkdir -p /sd/pmos-files/keys /sd/pmos-files/secrets'
+adb push -q "$KEYS/." /sd/pmos-files/keys/
+adb push -q "$OUT/firmware.tar" /sd/pmos-files/firmware.tar
+adb push -q "$OUT/config.tar" /sd/pmos-files/config.tar
+adb push -q "$ROOT/build/dev/rootfs/init" /sd/pmos-files/bh-adbd
+adb push -q "$ROOT/tools/pmos/phone-config.sh" /sd/pmos-files/phone-config.sh
+adb push -q "$ROOT/tools/pmos/phone-build.sh" /sd/pmos-files/phone-build.sh
+adb push -q "$ROOT/build/wifi.txt" /sd/pmos-files/secrets/wifi
+adb push -q "$ROOT/build/ssh/id_ed25519.pub" /sd/pmos-files/secrets/authorized_keys
+
+adb shell 'nohup sh /sd/pmos-files/phone-build.sh > /sd/mkpmos.log 2>&1 &'
+echo "started: tail /sd/mkpmos.log on the phone"

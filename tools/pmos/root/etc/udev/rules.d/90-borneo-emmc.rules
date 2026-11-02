@@ -1,0 +1,2 @@
+# Android's partitions aren't for the desktop to offer, mount or scan.
+SUBSYSTEM=="block", KERNEL=="mmcblk*", ATTRS{type}=="MMC", ENV{UDISKS_IGNORE}="1", ENV{UDISKS_SYSTEM}="1"

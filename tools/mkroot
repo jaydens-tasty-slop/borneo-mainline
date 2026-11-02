@@ -51,6 +51,8 @@ DEFAULT = [
     "alsa-utils", "alsa-ucm-conf",
     # Modem
     "qmi-utils", "dropbear-scp", "modemmanager", "modemmanager-udev", "iproute2", "eudev",
+    # Building the postmarketOS root with apk on the phone: see tools/mkpmos
+    "e2fsprogs", "ca-certificates-bundle",
 ]
 
 # What the skipped install scripts would have done, run by the phone on first use.

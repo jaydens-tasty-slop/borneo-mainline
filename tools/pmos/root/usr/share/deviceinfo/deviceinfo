@@ -1,0 +1,8 @@
+deviceinfo_format_version="0"
+deviceinfo_name="Motorola Moto G Power (2021)"
+deviceinfo_manufacturer="Motorola"
+deviceinfo_codename="motorola-borneo"
+deviceinfo_arch="aarch64"
+deviceinfo_chassis="handset"
+deviceinfo_screen_width="720"
+deviceinfo_screen_height="1600"

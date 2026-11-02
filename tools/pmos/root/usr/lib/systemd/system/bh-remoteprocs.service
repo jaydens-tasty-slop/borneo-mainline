@@ -1,0 +1,13 @@
+[Unit]
+Description=Start the modem, ADSP and CDSP
+After=bh-rmtfs.service bh-tqftpserv.service
+Wants=bh-rmtfs.service bh-tqftpserv.service
+Before=NetworkManager.service ModemManager.service bluetooth.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/bh-remoteprocs
+
+[Install]
+WantedBy=multi-user.target

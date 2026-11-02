@@ -1,0 +1,12 @@
+[Unit]
+Description=TFTP over QRTR for the remote processors
+After=bh-modem-files.service
+Requires=bh-modem-files.service
+
+[Service]
+ExecStart=/usr/bin/tqftpserv
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

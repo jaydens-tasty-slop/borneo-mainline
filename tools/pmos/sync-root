@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# sync-root: apply tools/pmos/root and tools/pmos/phone-config.sh's fixed parts to a running pmOS.
+# Without the secrets, which only tools/mkpmos handles.
+set -euo pipefail
+ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+export ANDROID_SERIAL=${ANDROID_SERIAL:-<serial>}
+mkdir -p "$ROOT/build/pmos"
+tar -C "$ROOT/tools/pmos/root" --owner=0 --group=0 -cf "$ROOT/build/pmos/config.tar" .
+adb push -q "$ROOT/build/pmos/config.tar" /tmp/config.tar
+adb shell 'tar -xf /tmp/config.tar -C / && rm /tmp/config.tar && systemctl daemon-reload'
