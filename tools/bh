@@ -132,14 +132,37 @@ def state():
     return "none"
 
 
+def on_usb_as_mainline():
+    """True if the phone's dev kernel is on USB, whatever the adb server thinks."""
+    for d in Path("/sys/bus/usb/devices").glob("*"):
+        try:
+            if (d / "serial").read_text().strip() == SERIAL:
+                return (d / "product").read_text().strip() == "borneo mainline"
+        except OSError:
+            pass
+    return False
+
+
 def wait_for(wanted, timeout):
+    """Wait for the phone, re-adding the gadget if the adb server fails to pick it up.
+
+    After a re-enumeration the server's one attempt to open the device sometimes times out,
+    and it never tries again. Only a new device gets its attention.
+    """
     deadline = time.monotonic() + timeout
+    unseen = 0
     while True:
         current = state()
         if current in wanted:
             return current
         if time.monotonic() >= deadline:
             return None
+        unseen = unseen + 1 if current == "none" and on_usb_as_mainline() else 0
+        if unseen >= 15:
+            print("bh: adb server lost the phone, re-adding the gadget", file=sys.stderr)
+            run([str(ROOT / "tools/usbadb"), "reset"], timeout=20)
+            run([str(ROOT / "tools/usbadb"), "rebind"], timeout=20)
+            unseen = 0
         time.sleep(1)
 
 

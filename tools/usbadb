@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""Talk to the phone's adbd directly over usbfs, for when the adb server has lost it.
+
+    tools/usbadb shell 'command'    run a command, print its output
+    tools/usbadb rebind             drop and re-add the gadget, so the server sees a new device
+    tools/usbadb status             answer a control request, then the ADB handshake
+    tools/usbadb reset              reset the USB port (needs only the phone's own device node)
+
+The adb server only opens a device when it appears. If its first attempt fails it never tries
+again, and restarting the server isn't an option on a host with other devices on it. This finds
+the phone by serial on any port, and refuses to touch anything else.
+"""
+import ctypes
+import errno
+import fcntl
+import glob
+import os
+import struct
+import sys
+
+SERIAL = "<serial>"
+BULK = 0xc0185502
+CONTROL = 0xc0185500
+CLAIM = 0x8004550f
+RELEASE = 0x80045510
+RESET = 0x5514
+UDC = "/sys/kernel/config/usb_gadget/g1/UDC"
+
+
+class Bulk(ctypes.Structure):
+    _fields_ = [("ep", ctypes.c_uint), ("len", ctypes.c_uint), ("timeout", ctypes.c_uint),
+                ("data", ctypes.c_void_p)]
+
+
+class Ctrl(ctypes.Structure):
+    _fields_ = [("type", ctypes.c_uint8), ("req", ctypes.c_uint8), ("val", ctypes.c_uint16),
+                ("idx", ctypes.c_uint16), ("len", ctypes.c_uint16), ("timeout", ctypes.c_uint32),
+                ("data", ctypes.c_void_p)]
+
+
+def find():
+    for d in glob.glob("/sys/bus/usb/devices/*"):
+        try:
+            if open(d + "/serial").read().strip() == SERIAL:
+                return d
+        except OSError:
+            pass
+    sys.exit("usbadb: phone not on USB")
+
+
+def node(d):
+    return "/dev/bus/usb/%03d/%03d" % (int(open(d + "/busnum").read()), int(open(d + "/devnum").read()))
+
+
+class Link:
+    def __init__(self, d):
+        eps = [int(os.path.basename(p)[3:], 16)
+               for p in glob.glob(d + "/" + os.path.basename(d) + ":1.0/ep_*")]
+        self.ein = [e for e in eps if e & 0x80][0]
+        self.eout = [e for e in eps if not e & 0x80][0]
+        self.fd = os.open(node(d), os.O_RDWR)
+        fcntl.ioctl(self.fd, CLAIM, struct.pack("I", 0))
+
+    def close(self):
+        fcntl.ioctl(self.fd, RELEASE, struct.pack("I", 0))
+
+    def bulk(self, ep, buf, n, timeout):
+        b = Bulk(ep, n, timeout, ctypes.cast(buf, ctypes.c_void_p))
+        return fcntl.ioctl(self.fd, BULK, b)
+
+    def send(self, cmd, a0, a1, data=b""):
+        c = struct.unpack("<I", cmd)[0]
+        hdr = struct.pack("<6I", c, a0, a1, len(data), sum(data), c ^ 0xffffffff)
+        self.bulk(self.eout, ctypes.create_string_buffer(hdr, 24), 24, 3000)
+        if data:
+            self.bulk(self.eout, ctypes.create_string_buffer(data, len(data)), len(data), 3000)
+
+    def recv(self, timeout=5000):
+        buf = ctypes.create_string_buffer(24)
+        n = self.bulk(self.ein, buf, 24, timeout)
+        if n != 24:
+            raise OSError(errno.EIO, "short header")
+        cmd, a0, a1, length, _, _ = struct.unpack("<6I", buf.raw)
+        data = b""
+        while len(data) < length:
+            b = ctypes.create_string_buffer(length - len(data))
+            got = self.bulk(self.ein, b, length - len(data), timeout)
+            data += b.raw[:got]
+        return struct.pack("<I", cmd), a0, a1, data
+
+
+def shell(d, cmd, timeout=5000):
+    link = Link(d)
+    try:
+        link.send(b"CNXN", 0x01000000, 4096, b"host::\0")
+        while link.recv(timeout)[0] != b"CNXN":
+            pass
+        link.send(b"OPEN", 1, 0, b"shell:" + cmd.encode() + b"\0")
+        while True:
+            what, a0, a1, data = link.recv(timeout)
+            if what == b"WRTE":
+                sys.stdout.buffer.write(data)
+                sys.stdout.buffer.flush()
+                link.send(b"OKAY", 1, a0)
+            elif what == b"CLSE":
+                return
+    finally:
+        link.close()
+
+
+def status(d):
+    fd = os.open(node(d), os.O_RDWR)
+    buf = ctypes.create_string_buffer(2)
+    c = Ctrl(0x80, 0, 0, 0, 2, 1500, ctypes.cast(buf, ctypes.c_void_p))
+    try:
+        fcntl.ioctl(fd, CONTROL, c)
+        print("control ok")
+    except OSError as e:
+        print("control failed:", errno.errorcode.get(e.errno))
+    finally:
+        os.close(fd)
+    link = Link(d)
+    try:
+        link.send(b"CNXN", 0x01000000, 4096, b"host::\0")
+        print("adbd says", link.recv(3000)[0].decode())
+    except OSError as e:
+        print("adbd failed:", errno.errorcode.get(e.errno))
+    finally:
+        link.close()
+
+
+def main():
+    what = sys.argv[1] if len(sys.argv) > 1 else "status"
+    d = find()
+    if what == "status":
+        status(d)
+    elif what == "reset":
+        fcntl.ioctl(os.open(node(d), os.O_RDWR), RESET, 0)
+    elif what == "shell":
+        shell(d, " ".join(sys.argv[2:]))
+    elif what == "rebind":
+        shell(d, f"(sleep 1; echo > {UDC}; sleep 2; echo $(ls /sys/class/udc) > {UDC}) >/dev/null 2>&1 &")
+    else:
+        sys.exit(__doc__)
+
+
+main()
