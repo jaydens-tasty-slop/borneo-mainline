@@ -30,6 +30,7 @@ BOARD = "qcom/sm6115/motorola/borneo"
 # Signed images that get squashed, as (name in the vendor tree, name mainline loads)
 SQUASH = [
     ("a610_zap", f"{BOARD}/a610_zap.mbn"),
+    ("venus", f"{BOARD}/venus.mbn"),
 ]
 
 # Files inside the vendor partition, as (path there, name mainline loads)

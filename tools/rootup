@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# rootup: bring up the tools/mkroot image on a phone running the dev kernel.
+#
+#   tools/rootup          mount it at /r on the phone, ready for a chroot
+#   tools/rootup --push   copy build/root/rootfs.ext4 to the microSD card first
+#
+# Then: adb shell chroot /r /bin/sh -lc '...'
+#
+# The image is a file on the card's own filesystem, so nothing on the card is disturbed.
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+export ANDROID_SERIAL=${ANDROID_SERIAL:-<serial>}
+
+adb shell 'mkdir -p /sd /r; grep -q " /sd " /proc/mounts || mount /dev/mmcblk1p1 /sd'
+
+if [[ ${1:-} == --push ]]; then
+	adb shell 'if grep -q " /r " /proc/mounts; then umount -l /r; fi'
+	adb push "$ROOT/build/root/rootfs.ext4" /sd/rootfs.ext4
+fi
+
+adb shell '
+set -e
+grep -q " /r " /proc/mounts || mount -o loop /sd/rootfs.ext4 /r
+for d in proc sys dev; do
+	grep -q " /r/$d " /proc/mounts || mount -o rbind /$d /r/$d
+done
+for d in tmp run; do
+	grep -q " /r/$d " /proc/mounts || mount -t tmpfs tmpfs /r/$d
+done
+if [ -x /r/etc/first-boot ]; then chroot /r /etc/first-boot; fi
+df -h /r | tail -1
+'

@@ -1,0 +1,185 @@
+#!/usr/bin/env python3
+"""Build an Alpine aarch64 root filesystem image for testing on the phone.
+
+    tools/mkroot [--size 2G] [package ...]
+
+Writes build/root/rootfs.ext4, which tools/bh-style scripts copy to the microSD card and
+loop mount, so that the card itself doesn't have to be reformatted.
+
+Nothing downloaded here ever runs on the host. Packages are unpacked as data, which also
+means their install scripts don't run, so the first boot does what they would have
+(see FIRST_BOOT). Each package is checked against the hash in the repository index, and
+the index comes over HTTPS. The index's own signature isn't checked.
+"""
+import argparse
+import base64
+import hashlib
+import io
+import shutil
+import subprocess
+import sys
+import tarfile
+import urllib.request
+import zlib
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+OUT = ROOT / "build/root"
+CACHE = ROOT / "build/dl/alpine-pkgs"
+TREE = OUT / "tree"
+FIRMWARE = ROOT / "build/fw/rootfs/lib/firmware"
+
+MIRROR = "https://dl-cdn.alpinelinux.org/alpine/edge"
+REPOS = ["main", "community"]
+ARCH = "aarch64"
+
+BASE = ["alpine-baselayout", "busybox", "musl", "apk-tools"]
+DEFAULT = [
+    # GPU
+    "mesa-dri-gallium", "mesa-egl", "mesa-gles", "kmscube",
+    # Video codec
+    "v4l-utils", "ffmpeg",
+    # WiFi, and logging in over it
+    "iw", "wpa_supplicant", "dropbear", "wireless-regdb",
+    # Qualcomm userspace services for the remote processors
+    "qrtr", "rmtfs", "pd-mapper", "tqftpserv",
+    # General
+    "i2c-tools", "evtest", "strace", "alsa-utils",
+]
+
+# What the skipped install scripts would have done, run by the phone on first use.
+FIRST_BOOT = """#!/bin/busybox sh
+/bin/busybox --install -s
+rm -f /etc/first-boot
+"""
+
+
+def fetch(url, path):
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".part")
+        with urllib.request.urlopen(url, timeout=120) as r, open(tmp, "wb") as f:
+            shutil.copyfileobj(r, f)
+        tmp.rename(path)
+    return path
+
+
+def load_index(repo):
+    """Returns the repository's packages as a list of {field letter: value} records."""
+    index = fetch(f"{MIRROR}/{repo}/{ARCH}/APKINDEX.tar.gz", CACHE / repo / "APKINDEX.tar.gz")
+    with tarfile.open(index, "r:gz") as tar:
+        text = tar.extractfile("APKINDEX").read().decode()
+    records = []
+    for block in text.split("\n\n"):
+        fields = dict(line.split(":", 1) for line in block.splitlines() if ":" in line)
+        if "P" in fields:
+            fields["repo"] = repo
+            records.append(fields)
+    return records
+
+
+def strip_version(token):
+    for op in ("<", ">", "=", "~"):
+        token = token.split(op, 1)[0]
+    return token
+
+
+def resolve(wanted, records):
+    by_name = {r["P"]: r for r in records}
+    providers = {}
+    for r in records:
+        for token in r.get("p", "").split():
+            providers.setdefault(strip_version(token), []).append(r)
+
+    def pick(name):
+        if name in by_name:
+            return by_name[name]
+        if name == "/bin/sh":
+            return by_name["busybox"]
+        options = providers.get(name)
+        if not options:
+            return None
+        return max(options, key=lambda r: int(r.get("k", 0)))
+
+    chosen, queue, missing = {}, list(wanted), []
+    while queue:
+        name = queue.pop()
+        if name.startswith("!"):
+            continue
+        record = pick(strip_version(name))
+        if record is None:
+            missing.append(name)
+            continue
+        if record["P"] in chosen:
+            continue
+        chosen[record["P"]] = record
+        queue.extend(record.get("D", "").split())
+    return chosen, missing
+
+
+def control_hash(data):
+    """The index's C: field: SHA-1 of the second gzip stream, the package's control data."""
+    start = 0
+    for _ in range(2):
+        d = zlib.decompressobj(zlib.MAX_WBITS | 16)
+        d.decompress(data[start:])
+        end = len(data) - len(d.unused_data)
+        previous, start = start, end
+    return "Q1" + base64.b64encode(hashlib.sha1(data[previous:start]).digest()).decode()
+
+
+def install(record):
+    name = f'{record["P"]}-{record["V"]}.apk'
+    path = fetch(f'{MIRROR}/{record["repo"]}/{ARCH}/{name}', CACHE / record["repo"] / name)
+    data = path.read_bytes()
+    if control_hash(data) != record["C"]:
+        path.unlink()
+        raise ValueError(f"{name} doesn't match the repository index")
+
+    # An .apk is concatenated gzip streams holding one tar stream with no end marker.
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+        for member in tar:
+            top = member.name.split("/", 1)[0]
+            if top.startswith(".") or member.isdev():
+                continue
+            target = TREE / member.name
+            if target.is_symlink() or (target.exists() and not target.is_dir()):
+                target.unlink()
+            tar.extract(member, TREE, filter="tar")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--size", default="2G", help="size of the image (default %(default)s)")
+    ap.add_argument("packages", nargs="*", help="packages in addition to the default set")
+    args = ap.parse_args()
+
+    records = [r for repo in REPOS for r in load_index(repo)]
+    chosen, missing = resolve(BASE + DEFAULT + args.packages, records)
+    if missing:
+        print("not found:", " ".join(sorted(set(missing))), file=sys.stderr)
+
+    shutil.rmtree(TREE, ignore_errors=True)
+    TREE.mkdir(parents=True)
+    # Directories that newer Alpine merges with their /usr counterparts have to exist first
+    for record in sorted(chosen.values(), key=lambda r: r["P"] != "alpine-baselayout"):
+        install(record)
+
+    for sub in ("proc", "sys", "dev", "run", "tmp", "mnt", "root"):
+        (TREE / sub).mkdir(exist_ok=True)
+    (TREE / "etc/first-boot").write_text(FIRST_BOOT)
+    (TREE / "etc/first-boot").chmod(0o755)
+    if FIRMWARE.is_dir():
+        shutil.copytree(FIRMWARE, TREE / "lib/firmware", dirs_exist_ok=True, symlinks=True)
+
+    image = OUT / "rootfs.ext4"
+    image.unlink(missing_ok=True)
+    subprocess.run(["mke2fs", "-q", "-t", "ext4", "-L", "borneo-root", "-E", "root_owner=0:0,lazy_itable_init=0,lazy_journal_init=0",
+                    "-d", str(TREE), str(image), args.size], check=True)
+    used = subprocess.run(["du", "-sh", str(TREE)], capture_output=True, text=True).stdout.split()[0]
+    print(f"{len(chosen)} packages, {used} used, in {image.relative_to(ROOT)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
