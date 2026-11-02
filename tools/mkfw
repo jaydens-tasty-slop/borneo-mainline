@@ -57,6 +57,7 @@ SD_COPY = [
 VENDOR = [
     ("/firmware/a630_sqe.fw", "qcom/a630_sqe.fw"),
     ("/firmware/focaltech_ts_fw_djnboe.bin", f"{BOARD}/focaltech_ts_fw_djnboe.bin"),
+    ("/firmware/aw882xx_spk_reg.bin", f"{BOARD}/aw882xx_spk_reg.bin"),
 ]
 
 ELF_MAGIC = b"\x7fELF"
