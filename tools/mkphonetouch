@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# mkphonetouch: build tools/phonetouch.c for the phone, as build/dev/phonetouch. Static, with the
+# kernel's nolibc, so it runs on any root. Run tools/bk first, for the kernel's headers.
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+clang --target=aarch64-linux-gnu -nostdlib -static -fuse-ld=lld -Os -fno-stack-protector \
+	-nostdlibinc -I "$ROOT/build/dev/obj/usr/include" -I "$ROOT/linux/tools/include/nolibc" \
+	-include nolibc.h "$ROOT/tools/phonetouch.c" -o "$ROOT/build/dev/phonetouch"

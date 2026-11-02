@@ -72,6 +72,9 @@ EOF
 	}
 fi
 
+# Our schema override, which tools/pmos/root put there.
+glib-compile-schemas /usr/share/glib-2.0/schemas >/dev/null 2>&1
+
 # Enable what the packages' presets say, as pmbootstrap does, then ours.
 systemctl preset-all >/dev/null 2>&1
 systemctl enable bh-adbd.service bh-modem-files.service bh-rmtfs.service bh-tqftpserv.service \

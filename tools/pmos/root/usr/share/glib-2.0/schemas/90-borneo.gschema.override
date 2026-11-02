@@ -1,0 +1,4 @@
+# This phone's vibrator is run at about 3 V by the vendor's kernel, which is magnitude 0xba00
+# in pm8xxx-vibrator. Its full magnitude would ask for 3544 mV.
+[org.sigxcpu.feedbackd]
+max-haptic-strength=0.72
