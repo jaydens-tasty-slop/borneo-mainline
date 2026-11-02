@@ -22,12 +22,14 @@ FW=$ROOT/build/fw
 mkdir -p "$OUT"
 tar -C "$FW/sd/lib" -cf "$OUT/firmware.tar" firmware
 tar -C "$FW/rootfs/lib" -rf "$OUT/firmware.tar" firmware
+tar -C "$FW/qcom" --owner=0 --group=0 -cf "$OUT/qcom.tar" .
 tar -C "$ROOT/tools/pmos/root" --owner=0 --group=0 -cf "$OUT/config.tar" .
 
 adb shell date -u -s "@$(date -u +%s)" >/dev/null
 adb shell 'mkdir -p /sd/pmos-files/keys /sd/pmos-files/secrets'
 adb push -q "$KEYS/." /sd/pmos-files/keys/
 adb push -q "$OUT/firmware.tar" /sd/pmos-files/firmware.tar
+adb push -q "$OUT/qcom.tar" /sd/pmos-files/qcom.tar
 adb push -q "$OUT/config.tar" /sd/pmos-files/config.tar
 adb push -q "$ROOT/build/dev/rootfs/init" /sd/pmos-files/bh-adbd
 adb push -q "$ROOT/tools/pmos/phone-config.sh" /sd/pmos-files/phone-config.sh

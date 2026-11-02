@@ -57,7 +57,8 @@ mesa-dri-gallium mesa-vulkan-freedreno mesa-gles mesa-egl kmscube
 alsa-utils alsa-ucm-conf pipewire-alsa
 networkmanager networkmanager-wifi networkmanager-wwan iw modemmanager qmi-utils qrtr rmtfs tqftpserv
 linux-firmware-ath10k linux-firmware-qca
-bluez e2fsprogs e2fsprogs-extra
+bluez bluez-btmgmt bootmac e2fsprogs e2fsprogs-extra
+hexagonrpcd hexagonrpcd-systemd hexagonrpcd-udev libssc iio-sensor-proxy
 evtest i2c-tools strace htop tcpdump font-noto
 "
 
@@ -70,6 +71,9 @@ chroot "$T" /sbin/apk --no-interactive --no-progress fix 2>&1 | tail -n 5 || tru
 
 say "firmware"
 tar -xf "$FILES/firmware.tar" -C "$T/lib/"
+# What hexagonrpcd serves to the ADSP.
+mkdir -p "$T/usr/share/qcom"
+tar -xf "$FILES/qcom.tar" -C "$T/usr/share/qcom/"
 
 # pmbootstrap would have done this. Without it nothing works under systemd: its PATH has no /bin,
 # where busybox's applets are, and units name paths such as /usr/sbin/agetty.

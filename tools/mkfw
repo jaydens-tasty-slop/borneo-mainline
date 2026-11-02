@@ -14,6 +14,10 @@ which is never committed.
     mkdir -p build/fw/bluetooth
     debugfs -R 'rdump /image build/fw/bluetooth' backup/stock/bluetooth_a.img
 
+Also lays out build/fw/qcom, which hexagonrpcd serves to the ADSP: its libraries, and the sensor
+configuration and calibrated registry. It's read from dsp_a, vendor and persist; persist is this
+phone's own calibration, so it's copied and left as it is.
+
 The vendor tree splits each signed image into a .mdt and numbered .bNN segments. Mainline
 board files name a single .mbn, so the segments are put back together here: each goes at
 the file offset its program header gives, which is the layout the image was signed in.
@@ -31,6 +35,18 @@ VENDOR_IMG = ROOT / "build/fw/super/vendor_a.img"
 OUT = ROOT / "build/fw/rootfs/lib/firmware"
 SD_OUT = ROOT / "build/fw/sd/lib/firmware"
 BOARD = "qcom/sm6115/motorola/borneo"
+DSP_IMG = ROOT / "backup/stock/dsp_a.img"
+PERSIST_IMG = ROOT / "backup/stock/persist.img"
+# Where hexagonrpcd looks, by its convention for -R. See hexagonrpcd(1) for the layout.
+QCOM_SHARE = ROOT / "build/fw/qcom/sm6115/Motorola/borneo"
+SOCINFO = {
+    "hw_platform": "IDP",
+    "platform_subtype": "Unknown",
+    "platform_subtype_id": "0",
+    "platform_version": "65536",
+    "revision": "1.0",
+    "soc_id": "444",
+}
 
 # Signed images that get squashed, as (name in the vendor tree, name mainline loads)
 SQUASH = [
@@ -121,7 +137,35 @@ def extract_vendor(path, out):
         raise FileNotFoundError(f"{path} is not in {VENDOR_IMG}")
 
 
+def rdump(image, path, out):
+    out.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["debugfs", "-R", f"rdump {path} {out}", str(image)], check=True, capture_output=True)
+    if not (out / Path(path).name).exists():
+        raise FileNotFoundError(f"{path} is not in {image}")
+
+
+def lay_out_dsp_files():
+    shutil.rmtree(QCOM_SHARE, ignore_errors=True)
+    rdump(DSP_IMG, "/adsp", QCOM_SHARE / "dsp")
+    rdump(DSP_IMG, "/cdsp", QCOM_SHARE / "dsp")
+    # Not /etc/sensors/config. Given those JSON files the DSP regenerates the registry from them,
+    # hexagonrpcd can't write it, and the ADSP dies of it in sns_registry_sensor.c. The registry
+    # from persist is already what they'd generate on this phone, so it isn't missing anything.
+    extract_vendor("/etc/sensors/sns_reg_config", QCOM_SHARE / "sensors/sns_reg.conf")
+    rdump(PERSIST_IMG, "/sensors/registry/registry", QCOM_SHARE / "sensors")
+    # Served as /sys/devices/soc0, which on Android has more in it than mainline's. Values from
+    # mainline's qcom_socinfo in debugfs, and they're what the sensor configs' filters ask for.
+    socinfo = QCOM_SHARE / "socinfo"
+    socinfo.mkdir(parents=True)
+    for name, value in SOCINFO.items():
+        (socinfo / name).write_text(value + "\n")
+    # debugfs keeps the owner's mode, which in persist isn't readable by the fastrpc user.
+    for f in QCOM_SHARE.rglob("*"):
+        f.chmod(0o755 if f.is_dir() else 0o644)
+
+
 def main():
+    lay_out_dsp_files()
     shutil.rmtree(OUT, ignore_errors=True)
     for name, target in SQUASH:
         squash(name, OUT / target)

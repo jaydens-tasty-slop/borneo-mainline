@@ -1,0 +1,7 @@
+# The ADSP starts long after multi-user.target, once its firmware's dependencies are there, so
+# these services' conditions fail if they're simply enabled.
+SUBSYSTEM=="misc", KERNEL=="fastrpc-adsp", TAG+="systemd", ENV{SYSTEMD_WANTS}+="hexagonrpcd-adsp-rootpd.service hexagonrpcd-adsp-sensorspd.service"
+
+# The Sensor Core reports as Android does, +1 g on the axis pointing up, and iio-sensor-proxy wants
+# -1 g on it. Checked by turning the phone's UI around under a webcam.
+SUBSYSTEM=="misc", KERNEL=="fastrpc-adsp", ENV{ACCEL_MOUNT_MATRIX}="-1, 0, 0; 0, -1, 0; 0, 0, -1"
