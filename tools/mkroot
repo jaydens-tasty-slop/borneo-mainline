@@ -50,15 +50,21 @@ DEFAULT = [
     # Audio
     "alsa-utils", "alsa-ucm-conf",
     # Modem
-    "qmi-utils", "dropbear-scp",
+    "qmi-utils", "dropbear-scp", "modemmanager", "modemmanager-udev", "iproute2", "eudev",
 ]
 
 # What the skipped install scripts would have done, run by the phone on first use.
 FIRST_BOOT = """#!/bin/busybox sh
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 /bin/busybox --install -s
 # mke2fs -d keeps the host user's IDs. /proc, /sys and /dev are already mounted by now.
 for d in bin etc home lib media mnt opt root sbin srv usr var; do
 	chown -hR 0:0 "/$d"
+done
+# dbus won't start without the users its configuration names.
+for u in messagebus polkitd; do
+	addgroup -S "$u"
+	adduser -S -D -H -G "$u" "$u"
 done
 rm -f /etc/first-boot
 """
