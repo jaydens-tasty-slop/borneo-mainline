@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# bk: build a bootable development image for borneo from linux/.
+#
+#   tools/bk                 build the kernel, stub, initramfs and boot image
+#   tools/bk --dtbs          also run the upstream checks on the board DT
+#
+# Output is build/dev/borneo.img. Dev-only behaviour lives here, in tools/stub and in
+# tools/borneo-dev.config, so that linux/ only ever holds what could go upstream.
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+SRC=$ROOT/linux
+OUT=$ROOT/build/dev
+OBJ=$OUT/obj
+BOARD=sm6115-motorola-borneo
+DTB=$OBJ/arch/arm64/boot/dts/qcom/$BOARD.dtb
+
+# panic=0 leaves a panicking kernel spinning until the watchdog bites, the reset that's
+# proven to keep RAM and with it the log. reboot=warm makes the PMIC power key driver ask
+# for a warm reset on an ordinary reboot too. PSCI here is v1.0, so there's no RESET2.
+CMDLINE="ignore_loglevel nokaslr clk_ignore_unused pd_ignore_unused panic=0 oops=panic reboot=warm log_buf_len=2M printk.devkmsg=on"
+CMDLINE+=${BK_CMDLINE:+ $BK_CMDLINE}
+
+MAKE=(make -C "$SRC" O="$OBJ" ARCH=arm64 LLVM=1 CC="ccache clang" -j"$(nproc)" -s)
+
+BUSYBOX=$ROOT/build/dl/alpine/bin/busybox.static
+
+mkdir -p "$OBJ"
+
+if [[ ! -x $BUSYBOX ]]; then
+	echo "bk: $BUSYBOX is missing" >&2
+	exit 1
+fi
+
+if [[ ! -f $OBJ/.config || $ROOT/tools/borneo-dev.config -nt $OBJ/.config ]]; then
+	"${MAKE[@]}" defconfig
+	"$SRC/scripts/kconfig/merge_config.sh" -m -O "$OBJ" "$OBJ/.config" \
+		"$ROOT/tools/borneo-dev.config" | grep -E '^(Value|Previous|New|WARNING)' || true
+	"${MAKE[@]}" olddefconfig
+fi
+
+"${MAKE[@]}" Image "qcom/$BOARD.dtb" headers
+
+if [[ ${1:-} == --dtbs ]]; then
+	"${MAKE[@]}" CHECK_DTBS=y "qcom/$BOARD.dtb"
+fi
+
+IMAGE=$OBJ/arch/arm64/boot/Image
+
+# The stub's header must tell the bootloader how much room the real kernel needs.
+# The kernel's own header holds that size at offset 16, and it includes its BSS.
+KERNEL_SIZE=$(od -An -t u8 -j 16 -N 8 "$IMAGE" | tr -d ' ')
+clang --target=aarch64-linux-gnu -nostdlib -static -Wl,--no-dynamic-linker \
+	-fuse-ld=lld -DKERNEL_SIZE="$KERNEL_SIZE" -Wl,-T,"$ROOT/tools/stub/stub.lds" \
+	"$ROOT/tools/stub/stub.S" -o "$OUT/stub.elf"
+llvm-objcopy -O binary "$OUT/stub.elf" "$OUT/stub.bin"
+{ cat "$OUT/stub.bin"; head -c $((0x200000 - $(stat -c %s "$OUT/stub.bin"))) /dev/zero; cat "$IMAGE"; } \
+	>"$OUT/Image.stub"
+
+# /init is static and libc-free, built from the kernel's own nolibc. The shell it offers
+# over adb is Alpine's static busybox, which only ever runs on the phone.
+rm -rf "$OUT/rootfs"
+mkdir -p "$OUT/rootfs/bin"
+clang --target=aarch64-linux-gnu -nostdlib -static -fuse-ld=lld -Os -fno-stack-protector \
+	-nostdlibinc -I "$OBJ/usr/include" -I "$SRC/tools/include/nolibc" -include nolibc.h \
+	"$ROOT/tools/init/init.c" -o "$OUT/rootfs/init"
+install -m 0755 "$BUSYBOX" "$OUT/rootfs/bin/busybox"
+# Firmware from tools/mkfw, if it has been run. The images stay out of git, under build/.
+if [[ -d $ROOT/build/fw/rootfs ]]; then
+	cp -r "$ROOT/build/fw/rootfs/." "$OUT/rootfs/"
+fi
+(cd "$OUT/rootfs" && find . | cpio --quiet -o -H newc --owner=0:0) >"$OUT/initramfs.cpio"
+
+"$ROOT/tools/mkimg" --kernel "$OUT/Image.stub" --dtb "$DTB" \
+	--ramdisk "$OUT/initramfs.cpio" --cmdline "$CMDLINE" -o "$OUT/borneo.img"
+rm -rf "$ROOT/tools/__pycache__"
+ls -la "$OUT/borneo.img" "$IMAGE" | awk '{print $5, $9}'

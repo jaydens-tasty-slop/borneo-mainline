@@ -1,0 +1,544 @@
+#!/usr/bin/env python3
+"""bh: borneo harness. Drives a Moto G Power 2021 over USB for kernel bring-up.
+
+Commands are read-only unless stated otherwise. Every path that writes to the
+phone must go through check_writable().
+"""
+import argparse
+import hashlib
+import os
+import re
+import shlex
+import subprocess
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+RUNS = ROOT / "runs"
+BACKUP = ROOT / "backup"
+
+# Other Android devices may be on this host. adb and fastboot both honour
+# ANDROID_SERIAL, so setting it pins every command below to the borneo unit and a
+# flash can't reach anything else. state() also ignores other serials.
+SERIAL = "<serial>"
+os.environ["ANDROID_SERIAL"] = SERIAL
+
+# The only partitions a harness command may ever write. This is an allow-list
+# because the phone has dozens of partitions holding IMEI, calibration and the
+# boot chain, and losing some of them can't be undone. Slot B runs LineageOS and
+# stays untouched as the fallback, so only slot A is listed.
+WRITABLE = {"boot_a", "dtbo_a"}
+
+# userdata is large and the user confirmed it holds nothing important. mmcblk0
+# is a by-name link to the whole eMMC, which would duplicate everything else.
+BACKUP_SKIP = {"userdata", "mmcblk0"}
+
+STATES = {"none", "fastboot", "android", "mainline", "recovery", "sideload", "unauthorized",
+          "noperm", "edl", "dump"}
+
+# Printed by probe in adb modes. Each entry is safe on a running system.
+ADB_PROBE = {
+    "getprop": "getprop",
+    "cmdline": "cat /proc/cmdline",
+    "version": "cat /proc/version",
+    "bootinfo": "cat /proc/bootinfo",
+    "iomem": "cat /proc/iomem",
+    "partitions": "cat /proc/partitions",
+    "byname": "ls -l /dev/block/by-name /dev/block/bootdevice/by-name",
+    "dt-model": "cat /proc/device-tree/model; echo; "
+                "tr '\\0' ' ' < /proc/device-tree/compatible; echo",
+    "dt-ids": "for f in qcom,board-id qcom,msm-id qcom,pmic-id; do echo $f; "
+              "od -An -tx1 /proc/device-tree/$f; done",
+    "dt-ramoops": "cd /proc/device-tree/reserved-memory/ramoops_mem && for f in *; do "
+                  "echo \"== $f\"; od -An -tx1 $f; done",
+    "dt-memory": "od -An -tx1 /proc/device-tree/memory/reg",
+    "mounts": "cat /proc/mounts",
+    "selinux": "getenforce",
+    "dt-chosen": "for f in /proc/device-tree/chosen/*; do echo \"== $f\"; "
+                 "tr '\\0' ' ' < $f | cut -c1-500; echo; done",
+    "dt-reserved": "ls /proc/device-tree/reserved-memory/",
+    "pstore": "ls -la /sys/fs/pstore/",
+    "eud": "ls /sys/module | grep -i eud; "
+           "grep . /sys/module/*eud*/parameters/* 2>/dev/null",
+    "dload": "grep . /sys/module/msm_poweroff/parameters/* 2>/dev/null; "
+             "ls /sys/kernel/dload 2>/dev/null; grep . /sys/kernel/dload/* 2>/dev/null",
+    "config": "zcat /proc/config.gz",
+    "dmesg": "dmesg",
+    "battery": "grep . /sys/class/power_supply/*/uevent",
+    "i2c": "for d in /sys/bus/i2c/devices/*; do echo \"$d $(cat $d/name)\"; done",
+    "spi": "for d in /sys/bus/spi/devices/*; do echo \"$d $(cat $d/modalias)\"; done",
+    "id": "id",
+    "tools": "for t in dd sha256sum blockdev toybox busybox; do command -v $t; done",
+}
+
+FASTBOOT_PROBE = {
+    "getvar-all": ["getvar", "all"],
+    "oem-help": ["oem", "help"],
+    "oem-config": ["oem", "config"],
+}
+
+
+def run(cmd, timeout=30):
+    """Run a command, returning (returncode, combined output)."""
+    try:
+        p = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           timeout=timeout, text=True, errors="replace")
+    except subprocess.TimeoutExpired as e:
+        out = e.stdout.decode(errors="replace") if e.stdout else ""
+        return 124, out + f"\n[timed out after {timeout}s]\n"
+    return p.returncode, p.stdout
+
+
+def check_writable(partition):
+    """Every future flash or erase path must call this first."""
+    if partition not in WRITABLE:
+        sys.exit(f"bh: refusing to write {partition}: not in WRITABLE")
+
+
+def usb_ids():
+    ids = set()
+    for vendor in Path("/sys/bus/usb/devices").glob("*/idVendor"):
+        ids.add((vendor.read_text().strip(),
+                 (vendor.parent / "idProduct").read_text().strip()))
+    return ids
+
+
+def state():
+    """Return this phone's current mode as one of STATES."""
+    _, out = run(["adb", "devices", "-l"], timeout=10)
+    for line in out.splitlines()[1:]:
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] == SERIAL:
+            if "no permissions" in line:
+                return "noperm"
+            # tools/init/adbd.c names itself in its banner, or this would read as Android.
+            if parts[1] == "device" and "product:mainline" in parts:
+                return "mainline"
+            return {"device": "android"}.get(parts[1], parts[1])
+    _, out = run(["fastboot", "devices"], timeout=10)
+    for line in out.splitlines():
+        parts = line.split()
+        if parts and parts[0] == SERIAL:
+            return "noperm" if "no permissions" in line else "fastboot"
+    # 9008 and 900e don't report the phone's serial, so these can't be tied to it.
+    # Report them only once the phone is otherwise missing.
+    ids = usb_ids()
+    if ("05c6", "9008") in ids:
+        return "edl"
+    if ("05c6", "900e") in ids:
+        return "dump"
+    return "none"
+
+
+def wait_for(wanted, timeout):
+    deadline = time.monotonic() + timeout
+    while True:
+        current = state()
+        if current in wanted:
+            return current
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(1)
+
+
+def new_run(name):
+    d = RUNS / f"{datetime.now():%Y%m%d-%H%M%S}-{name}"
+    d.mkdir(parents=True)
+    return d
+
+
+def cmd_state(_):
+    current = state()
+    print(current)
+    if current == "noperm":
+        print("bh: no USB permission; install android-udev and replug", file=sys.stderr)
+    return 0
+
+
+def cmd_wait(args):
+    wanted = set(args.state)
+    unknown = wanted - STATES
+    if unknown:
+        sys.exit(f"bh: unknown state(s): {', '.join(sorted(unknown))}")
+    got = wait_for(wanted, args.timeout)
+    print(got or "timeout")
+    return 0 if got else 1
+
+
+def cmd_probe(_):
+    current = state()
+    if current in ("android", "recovery"):
+        ensure_root()
+        probes = {name: ["adb", "shell", cmd] for name, cmd in ADB_PROBE.items()}
+    elif current == "fastboot":
+        probes = {name: ["fastboot", *cmd] for name, cmd in FASTBOOT_PROBE.items()}
+    else:
+        print(f"bh: nothing to probe in state {current}", file=sys.stderr)
+        return 1
+    d = new_run(f"probe-{current}")
+    for name, cmd in probes.items():
+        _, out = run(cmd, timeout=60)
+        (d / f"{name}.txt").write_text(out)
+    print(d)
+    return 0
+
+
+def shell(command, timeout=120):
+    return run(["adb", "shell", command], timeout=timeout)
+
+
+def ensure_root():
+    """Try to get a root adb shell. Returns True if the shell is root."""
+    run(["adb", "root"], timeout=15)
+    run(["adb", "wait-for-any-device"], timeout=20)
+    _, who = shell("id -u", timeout=15)
+    return who.strip() == "0"
+
+
+def partitions():
+    """Return {name: (device_node, size_bytes)} from the running phone."""
+    for path in ("/dev/block/by-name", "/dev/block/bootdevice/by-name"):
+        rc, out = shell(f"ls {path}")
+        if rc == 0 and out.strip():
+            break
+    else:
+        sys.exit("bh: could not list partitions")
+    sizes = {}
+    for name in out.split():
+        node = f"{path}/{name}"
+        rc, size = shell(f"blockdev --getsize64 {shlex.quote(node)}")
+        if rc != 0 or not size.strip().isdigit():
+            sys.exit(f"bh: could not size {name}: {size.strip()}")
+        sizes[name] = (node, int(size))
+    return sizes
+
+
+def host_sha256(path):
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def cmd_backup(args):
+    """Copy every partition except userdata to backup/, verifying checksums.
+
+    Read-only on the phone. Runs from recovery by default because in Android the
+    modem keeps writing modemst1/2, which would make those copies inconsistent.
+    """
+    current = state()
+    if current != "recovery" and not (current == "android" and args.live):
+        sys.exit(f"bh: backup needs recovery (state is {current}); "
+                 "--live allows Android, with the modem running")
+    if not ensure_root():
+        sys.exit("bh: backup needs a root shell")
+    dest = BACKUP / args.label
+    dest.mkdir(parents=True, exist_ok=True)
+    parts = partitions()
+    total = sum(size for name, (_, size) in parts.items() if name not in BACKUP_SKIP)
+    print(f"{len(parts)} partitions, {total / 2**30:.1f} GiB to copy", flush=True)
+    failures = []
+    manifest = dest / "SHA256SUMS"
+    with manifest.open("a") as sums:
+        for name, (node, size) in sorted(parts.items(), key=lambda kv: kv[1][1]):
+            if name in BACKUP_SKIP:
+                print(f"skip {name}", flush=True)
+                continue
+            out = dest / f"{name}.img"
+            if out.exists() and out.stat().st_size == size:
+                print(f"have {name}", flush=True)
+                continue
+            with out.open("wb") as f:
+                p = subprocess.run(
+                    ["adb", "exec-out", f"dd if={shlex.quote(node)} bs=1048576 2>/dev/null"],
+                    stdout=f)
+            local = host_sha256(out)
+            rc, remote = shell(f"sha256sum {shlex.quote(node)}", timeout=1800)
+            remote = remote.split()[0] if rc == 0 and remote.strip() else "?"
+            ok = p.returncode == 0 and out.stat().st_size == size and local == remote
+            print(f"{'ok  ' if ok else 'FAIL'} {name} {size}", flush=True)
+            if ok:
+                sums.write(f"{local}  {out.name}\n")
+                sums.flush()
+            else:
+                # Remove it, or a rerun would accept this file on size alone.
+                out.unlink()
+                failures.append(name)
+    if failures:
+        print(f"bh: backup incomplete: {', '.join(failures)}", file=sys.stderr)
+        return 1
+    print(dest)
+    return 0
+
+
+def need_fastboot():
+    current = state()
+    if current != "fastboot":
+        sys.exit(f"bh: needs bootloader fastboot (state is {current})")
+
+
+def cmd_flash(args):
+    """WRITES to the phone, limited to the WRITABLE allow-list."""
+    check_writable(args.partition)
+    need_fastboot()
+    rc, out = run(["fastboot", "flash", args.partition, args.image], timeout=300)
+    print(out.strip())
+    return rc
+
+
+def cmd_erase(args):
+    """WRITES to the phone, limited to the WRITABLE allow-list."""
+    check_writable(args.partition)
+    need_fastboot()
+    rc, out = run(["fastboot", "erase", args.partition], timeout=120)
+    print(out.strip())
+    return rc
+
+
+def wait_gone(current, timeout):
+    """Wait until the phone has left the given state. Returns False on timeout."""
+    deadline = time.monotonic() + timeout
+    while state() == current:
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.5)
+    return True
+
+
+def refresh_slot():
+    """Restore slot A's retry count, which each boot from flash uses up.
+
+    If it ran out, the bootloader would fall back to Android on slot B.
+    """
+    run(["adb", "reboot", "bootloader"], timeout=15)
+    if wait_for({"fastboot"}, 60) != "fastboot":
+        sys.exit("bh: phone didn't reach fastboot")
+    _, out = run(["fastboot", "getvar", "slot-retry-count:_a"], timeout=15)
+    print(f"  {out.splitlines()[0]}, refreshing", flush=True)
+    run(["fastboot", "--set-active=a"], timeout=15)
+    run(["fastboot", "reboot"], timeout=15)
+    if not wait_gone("fastboot", 30) or wait_for({"recovery"}, 90) != "recovery":
+        sys.exit(f"bh: rescue didn't come back (state is {state()})")
+
+
+def cmd_crashtest(args):
+    """Panic the rescue kernel repeatedly and check its logs survive each reset.
+
+    This is the milestone 0 exit test. Each reset boots rescue straight from flash
+    with no tap, and the log recorded before the panic has to come back in pstore.
+    Landing in Android means slot A ran out of retries and the bootloader fell back
+    to slot B.
+    """
+    if state() not in ("recovery", "android"):
+        sys.exit(f"bh: crashtest needs adb (state is {state()})")
+    refresh_slot()
+    for i in range(1, args.count + 1):
+        marker = f"BH-CRASH-{int(time.time())}-{i}"
+        shell(f"echo 1 > /proc/sys/kernel/sysrq; echo '<2>{marker}' > /dev/kmsg; sync")
+        start = time.monotonic()
+        subprocess.Popen(["adb", "shell", "echo c > /proc/sysrq-trigger"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if not wait_gone("recovery", 30):
+            print(f"cycle {i}: FAIL, phone didn't reset after the panic")
+            return 1
+        landed = wait_for({"recovery", "android", "fastboot", "edl", "dump", "unauthorized"}, 120)
+        took = time.monotonic() - start
+        if landed != "recovery":
+            print(f"cycle {i}: FAIL, landed in {landed} after {took:.0f}s")
+            return 1
+        _, hits = shell(f"grep -a -c {marker} /sys/fs/pstore/dmesg-ramoops-0")
+        if hits.strip() != "1":
+            print(f"cycle {i}: FAIL, marker not in pstore ({hits.strip()})")
+            return 1
+        print(f"cycle {i}/{args.count} ok, {took:.0f}s", flush=True)
+        if i % args.refresh == 0 and i < args.count:
+            refresh_slot()
+    print(f"PASS: {args.count} cycles")
+    return 0
+
+
+def cmd_boot(args):
+    """Boot an image from RAM, then wait for the phone to leave fastboot.
+
+    Assumes the phone is in fastboot on slot A. `fastboot boot` doesn't use up slot
+    retries, but if the image hangs or crashes the reset boots rescue from flash,
+    which does, so top them up here. The bootloader only allows `set_active` to
+    change slots across a reboot, but re-marking the running slot needs no reboot.
+    """
+    need_fastboot()
+    _, out = run(["fastboot", "getvar", "slot-retry-count:_a"], timeout=15)
+    m = re.search(r"slot-retry-count:_a: *(\d+)", out)
+    if not m or int(m.group(1)) < 3:
+        run(["fastboot", "--set-active=a"], timeout=15)
+    rc, out = run(["fastboot", "boot", args.image], timeout=60)
+    print(out.strip(), flush=True)
+    if rc:
+        return rc
+    if not wait_gone("fastboot", 30):
+        print("bh: phone stayed in fastboot", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_rescue(args):
+    """Wait for rescue, then save its pstore files, which hold the last boot's logs."""
+    got = wait_for({"recovery", "android", "fastboot", "edl", "dump"}, args.timeout)
+    print(f"landed: {got or 'timeout'}", flush=True)
+    if got != "recovery":
+        return 1
+    d = new_run(args.name)
+    rc, out = run(["adb", "pull", "/sys/fs/pstore/.", str(d)], timeout=60)
+    print(d)
+    for f in sorted(d.iterdir()):
+        print(f"  {f.name} {f.stat().st_size}")
+    return rc
+
+
+def cmd_ablog(args):
+    """Save the UEFI bootloader logs from logfs and print the newest ones.
+
+    logfs is a FAT volume with one LogNN.txt per boot, which is the only view of
+    the bootloader stage without serial. CurBoot.txt names the current boot's
+    log, so going back N logs shows the boot N resets ago. The numbering wraps,
+    so names are ordered by the volume's own "cycle" rather than sorted.
+    """
+    if state() not in ("recovery", "android") or not ensure_root():
+        sys.exit("bh: ablog needs a root adb shell")
+    d = new_run("ablog")
+    img = d / "logfs.img"
+    with img.open("wb") as f:
+        subprocess.run(["adb", "exec-out", "dd if=/dev/block/by-name/logfs bs=1048576 2>/dev/null"],
+                       stdout=f, check=True)
+    subprocess.run(["mcopy", "-n", "-i", str(img), "::/", str(d)], check=True)
+    img.unlink()
+    cur = (d / "CurBoot.txt").read_text(errors="replace").replace("\0", "")
+    m = re.search(r"Log(\d+)\.txt", cur)
+    if not m:
+        sys.exit(f"bh: can't parse CurBoot.txt: {cur!r}")
+    numbers = sorted(int(re.search(r"\d+", p.name).group()) for p in d.glob("Log*.txt"))
+    newest = int(m.group(1))
+    # Logs before the current one, newest first, wrapping at the highest number.
+    order = [n for n in reversed(numbers) if n <= newest] + \
+            [n for n in reversed(numbers) if n > newest]
+    print(f"{d} (current boot: Log{newest:02d}.txt)")
+    for back, n in enumerate(order[:args.last]):
+        path = d / f"Log{n:02d}.txt"
+        text = path.read_text(errors="replace").replace("\0", "").replace("\r", "")
+        print(f"\n===== {path.name}, {back} boot(s) ago")
+        lines = text.splitlines()
+        print("\n".join(l[:args.width] for l in lines[-args.tail:]))
+    return 0
+
+
+def cmd_snap(args):
+    """Capture one webcam frame. Only run once the camera is aimed at the phone."""
+    out = Path(args.out) if args.out else new_run("snap") / "snap.jpg"
+    # Skip early frames so autofocus and exposure can settle.
+    rc, log = run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+                   "-f", "v4l2", "-input_format", "mjpeg",
+                   "-video_size", "1920x1080", "-i", args.device,
+                   "-vf", r"select=gte(n\,45)", "-frames:v", "1", "-fps_mode", "vfr",
+                   str(out)], timeout=30)
+    if rc:
+        print(log, file=sys.stderr)
+        return rc
+    print(out)
+    return 0
+
+
+def grab_gray(device, width=640, height=360):
+    """One small grayscale frame from the webcam, after the first few have settled."""
+    proc = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "v4l2", "-input_format", "mjpeg",
+         "-video_size", "1920x1080", "-i", device, "-vf",
+         rf"select=gte(n\,12),crop=960:540,scale={width}:{height},format=gray",
+         "-frames:v", "1", "-fps_mode", "vfr", "-f", "rawvideo", "-"],
+        capture_output=True, timeout=30)
+    return proc.stdout
+
+
+def sharpness(frame, width=640):
+    """Mean squared difference between neighbouring pixels. Higher means sharper."""
+    total = 0
+    for row in range(0, len(frame) - width, width):
+        line = frame[row:row + width]
+        total += sum((a - b) ** 2 for a, b in zip(line, line[1:]))
+    return total / max(len(frame), 1)
+
+
+def cmd_focus(args):
+    """Sweep the webcam's manual focus, and leave it at the sharpest setting."""
+    def ctl(*sets):
+        run(["v4l2-ctl", "-d", args.device] + [f"--set-ctrl={s}" for s in sets], timeout=10)
+
+    ctl("focus_automatic_continuous=0")
+    scores = {}
+    for focus in range(args.start, args.stop + 1, args.step):
+        ctl(f"focus_absolute={focus}")
+        frame = grab_gray(args.device)
+        if not frame:
+            print("bh: no frame from the webcam", file=sys.stderr)
+            return 1
+        scores[focus] = sharpness(frame)
+        print(f"  focus {focus:3}: {scores[focus]:8.1f}", flush=True)
+    best = max(scores, key=scores.get)
+    ctl(f"focus_absolute={best}")
+    print(f"focus_absolute={best}")
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("state", help="print the phone's current mode").set_defaults(fn=cmd_state)
+    p = sub.add_parser("wait", help="wait for one of the given modes")
+    p.add_argument("state", nargs="+")
+    p.add_argument("--timeout", type=int, default=120)
+    p.set_defaults(fn=cmd_wait)
+    sub.add_parser("probe", help="save read-only device info under runs/").set_defaults(fn=cmd_probe)
+    p = sub.add_parser("backup", help="copy partitions to backup/ (phone in recovery)")
+    p.add_argument("--label", default="stock")
+    p.add_argument("--live", action="store_true", help="allow running from Android")
+    p.set_defaults(fn=cmd_backup)
+    p = sub.add_parser("flash", help="flash an allow-listed partition (WRITES)")
+    p.add_argument("partition")
+    p.add_argument("image")
+    p.set_defaults(fn=cmd_flash)
+    p = sub.add_parser("erase", help="erase an allow-listed partition (WRITES)")
+    p.add_argument("partition")
+    p.set_defaults(fn=cmd_erase)
+    p = sub.add_parser("boot", help="boot an image from RAM (flashes nothing)")
+    p.add_argument("image")
+    p.set_defaults(fn=cmd_boot)
+    p = sub.add_parser("rescue", help="wait for rescue and save pstore logs")
+    p.add_argument("--timeout", type=int, default=120)
+    p.add_argument("--name", default="pstore")
+    p.set_defaults(fn=cmd_rescue)
+    p = sub.add_parser("crashtest", help="panic and recover repeatedly (reboots the phone)")
+    p.add_argument("--count", type=int, default=10)
+    p.add_argument("--refresh", type=int, default=3, help="refresh slot retries every N cycles")
+    p.set_defaults(fn=cmd_crashtest)
+    p = sub.add_parser("ablog", help="save and show UEFI bootloader logs from logfs")
+    p.add_argument("--last", type=int, default=2, help="how many boots to show")
+    p.add_argument("--tail", type=int, default=30, help="lines per boot")
+    p.add_argument("--width", type=int, default=140)
+    p.set_defaults(fn=cmd_ablog)
+    p = sub.add_parser("snap", help="capture a webcam frame")
+    p.add_argument("--device", default="/dev/video0")
+    p.add_argument("--out")
+    p.set_defaults(fn=cmd_snap)
+    p = sub.add_parser("focus", help="sweep the webcam's focus and keep the sharpest")
+    p.add_argument("--device", default="/dev/video0")
+    p.add_argument("--start", type=int, default=0)
+    p.add_argument("--stop", type=int, default=255)
+    p.add_argument("--step", type=int, default=25)
+    p.set_defaults(fn=cmd_focus)
+    args = ap.parse_args()
+    return args.fn(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

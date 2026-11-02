@@ -1,0 +1,5 @@
+# Partition backups hold IMEI, keys and calibration data. Never commit them.
+/backup/
+/runs/
+/linux/
+/build/

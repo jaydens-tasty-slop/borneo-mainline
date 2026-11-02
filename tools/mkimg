@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""mkimg: pack a kernel and DTB into a boot image borneo's bootloader will take.
+
+The bootloader's rules, from its own UEFI log (see `bh ablog`):
+- dtbo_a holds no valid table, so it looks for a DTB appended to the kernel and
+  ignores the boot image's DTB section. Appended DTBs only work with a gzipped
+  kernel, because it finds the DTB by where the gzip stream ends.
+- The DTB must match exactly: qcom,msm-id <444 0x10000>, qcom,board-id <0x22 0xc000>.
+- Its model must be the codename, ignoring case, or the DTB is rejected as if absent.
+- It must have the channel-id-map root property, or the bootloader asserts while it
+  builds the kernel command line.
+
+- Our command line in the boot image header makes it assert while it builds its own.
+  The stock header has a different one that doesn't, for a reason not yet pinned down,
+  so the header stays empty here and our command line goes in /chosen/bootargs.
+
+Those last three are Motorola quirks with no place in an upstream DTS, so they are
+applied to a copy of the DTB here. --no-fixup turns that off. Offsets and the page size
+match the stock images.
+"""
+import argparse
+import gzip
+import subprocess
+import tempfile
+from pathlib import Path
+
+
+MODEL = "borneo"
+# Copied from the stock DT. The bootloader indexes this by the phone's carrier ID.
+CHANNEL_ID_MAP = """
+    acg amxbr amxpr amxmx amxcl amxar amxla amxpe amxco tefbr tefmx tefar tefcl tefpe
+    tefco perar entcl iusmx niibr niicl niimx niipe oibr timbr tigco retbr retar retla
+    retcl tefla retla1st tefunl tigca tigca1st retmx attmx womcl avaco retpe openla
+    opencl openmx altmx openpe openpub undefined undefined undefined undefined
+    undefined undefined undefined undefined undefined undefined undefined undefined
+    undefined undefined undefined undefined undefined undefined undefined reteu retgb
+    retfr retes retie retde vfgb vfde vffr o2gb o2de orafr bouyfr eegb tescogb yoigo
+    oraes retapac retmea vfit vfes vfeu 3gb tescoie altfr 3ie altpt timit retma windit
+    vfhu vfro telhu playpl oraeu dteu teleu pluspl dtpl tefes altice vipeu veoneu
+    openeu reteu2 demogb retdemo undefined undefined undefined undefined undefined
+    undefined undefined undefined undefined undefined undefined undefined undefined
+    undefined undefined undefined undefined retca bwaca tkpca vzw att tmo sprint repw
+    attpre cricket cc usc tracfone retus metropcs rcica wndca dmc bby amz acg lra
+    comcast fi vzwpre boost spectrum undefined undefined undefined undefined undefined
+    undefined undefined undefined undefined undefined undefined undefined undefined
+    undefined undefined undefined undefined undefined undefined undefined undefined
+    undefined undefined undefined undefined undefined undefined undefined undefined
+    undefined undefined undefined undefined undefined undefined undefined undefined
+    retin retcn telstra vfau amzin jioin airin retid cmcc ctcn cucn retmm gt4gtw retth
+    retru trueth smarthk mobilpk retsea retjp softbank optus retkr retjio ymobile
+    lguplus docomo retanz cbncn undefined undefined undefined undefined undefined
+    undefined undefined undefined undefined undefined undefined undefined undefined
+    undefined undefined undefined undefined undefined undefined undefined undefined
+    undefined undefined undefined undefined undefined undefined undefined undefined
+    undefined undefined undefined undefined undefined undefined
+""".split()
+
+
+def fixup_dtb(src, dst, cmdline):
+    dst.write_bytes(Path(src).read_bytes())
+    subprocess.run(["fdtput", "-t", "s", dst, "/", "model", MODEL], check=True)
+    subprocess.run(["fdtput", "-t", "s", dst, "/", "channel-id-map", *CHANNEL_ID_MAP], check=True)
+    subprocess.run(["fdtput", "-c", dst, "/chosen"], check=False, capture_output=True)
+    subprocess.run(["fdtput", "-t", "s", dst, "/chosen", "bootargs", cmdline], check=True)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--kernel", required=True, help="Image, or Image.gz if it ends in .gz")
+    ap.add_argument("--dtb", required=True)
+    ap.add_argument("--ramdisk", help="defaults to an empty one")
+    ap.add_argument("--cmdline", default="")
+    ap.add_argument("--no-fixup", action="store_true", help="use the DTB exactly as given")
+    ap.add_argument("-o", "--out", required=True)
+    args = ap.parse_args()
+
+    kernel = Path(args.kernel).read_bytes()
+    if not args.kernel.endswith(".gz"):
+        kernel = gzip.compress(kernel, 9)
+
+    with tempfile.TemporaryDirectory() as t:
+        tmp = Path(t)
+        dtb = args.dtb
+        if not args.no_fixup:
+            dtb = tmp / "dtb"
+            fixup_dtb(args.dtb, dtb, args.cmdline)
+        (tmp / "kernel").write_bytes(kernel + Path(dtb).read_bytes())
+        ramdisk = args.ramdisk
+        if not ramdisk:
+            ramdisk = tmp / "ramdisk"
+            ramdisk.write_bytes(b"\0" * 512)
+        subprocess.run([
+            "mkbootimg", "--header_version", "2", "--pagesize", "4096", "--base", "0",
+            "--kernel_offset", "0x8000", "--ramdisk_offset", "0x01000000",
+            "--tags_offset", "0x100", "--dtb_offset", "0x01f00000",
+            "--os_version", "16.0.0", "--os_patch_level", "2026-09",
+            "--kernel", tmp / "kernel", "--ramdisk", ramdisk,
+            "--dtb", dtb, "--output", args.out], check=True)
+    print(args.out)
+
+
+if __name__ == "__main__":
+    main()

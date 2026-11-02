@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""mkrescue: turn the backed-up Lineage recovery into a hands-off rescue image.
+
+The result boots with `fastboot boot` and gives a root adb shell with no tap on
+the phone. Nothing is flashed. --dtb replaces the image's DTB, so that a DT
+captured from a running system (/sys/firmware/fdt) can stand in for the base DTB
+plus the dtbo overlay. fdtoverlay can't produce that DT: it drops the overlay's
+root properties. --append-dtb also gzips the kernel and appends the DTB to it,
+which is where the bootloader looks when the dtbo partition has no valid table.
+
+The ramdisk is edited as a cpio stream rather than unpacked to disk, which keeps
+file modes, ownership and special entries exactly as they were.
+"""
+import argparse
+import gzip
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+BACKUP = ROOT / "backup" / "stock"
+
+# ro.adb.secure.recovery is the property Lineage recovery's Enable ADB appears
+# to use. ro.adb.secure is flipped as well in case adbd checks it directly.
+PROP_FILE = "prop.default"
+PROP_EDITS = [(b"ro.adb.secure=1\n", b"ro.adb.secure=0\n")]
+PROP_APPEND = b"ro.adb.secure.recovery=0\nservice.adb.root=1\n"
+
+CPIO_HEADER = 110
+CPIO_TRAILER = "TRAILER!!!"
+
+
+def align4(n):
+    return (n + 3) & ~3
+
+
+def cpio_entries(data):
+    """Yield (header_fields, name_bytes, file_bytes) from a newc archive."""
+    off = 0
+    while True:
+        if data[off:off + 6] != b"070701":
+            sys.exit(f"mkrescue: bad cpio magic at offset {off}")
+        fields = [int(data[off + 6 + i * 8:off + 14 + i * 8], 16) for i in range(13)]
+        filesize, namesize = fields[6], fields[11]
+        name_start = off + CPIO_HEADER
+        name = data[name_start:name_start + namesize]
+        body_start = align4(name_start + namesize)
+        yield fields, name, data[body_start:body_start + filesize]
+        off = align4(body_start + filesize)
+        if name.rstrip(b"\0").decode() == CPIO_TRAILER:
+            return
+
+
+def cpio_write(entries):
+    out = bytearray()
+    for fields, name, body in entries:
+        fields = list(fields)
+        fields[6], fields[11] = len(body), len(name)
+        out += b"070701" + b"".join(b"%08X" % f for f in fields) + name
+        out += b"\0" * (align4(len(out)) - len(out))
+        out += body
+        out += b"\0" * (align4(len(out)) - len(out))
+    # Pad like the kernel's own initramfs tooling.
+    out += b"\0" * (-len(out) % 512)
+    return bytes(out)
+
+
+def patch_prop(body):
+    for old, new in PROP_EDITS:
+        if body.count(old) != 1:
+            sys.exit(f"mkrescue: expected exactly one {old!r} in {PROP_FILE}")
+        body = body.replace(old, new)
+    return body + PROP_APPEND
+
+
+def patch_ramdisk(raw):
+    data = gzip.decompress(raw)
+    entries, patched = [], False
+    for fields, name, body in cpio_entries(data):
+        if name.rstrip(b"\0").decode() == PROP_FILE:
+            body, patched = patch_prop(body), True
+        entries.append((fields, name, body))
+    if not patched:
+        sys.exit(f"mkrescue: {PROP_FILE} not found in ramdisk")
+    return gzip.compress(cpio_write(entries), 6)
+
+
+def info(text, key):
+    m = re.search(rf"^{re.escape(key)}: *(.*)$", text, re.M)
+    if not m:
+        sys.exit(f"mkrescue: {key} not found in image header")
+    return m.group(1).strip()
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("-o", "--out", required=True)
+    ap.add_argument("--image", default=str(BACKUP / "recovery_b.img"))
+    ap.add_argument("--dtb", help="use this DTB instead of the image's own")
+    ap.add_argument("--append-dtb", action="store_true",
+                    help="gzip the kernel and append the DTB to it")
+    args = ap.parse_args()
+
+    with tempfile.TemporaryDirectory() as t:
+        tmp = Path(t)
+        hdr = subprocess.run(["unpack_bootimg", "--boot_img", args.image, "--out", t],
+                             check=True, capture_output=True, text=True).stdout
+        if info(hdr, "boot image header version") != "2":
+            sys.exit("mkrescue: expected a header v2 image")
+        (tmp / "ramdisk.new").write_bytes(patch_ramdisk((tmp / "ramdisk").read_bytes()))
+        dtb = args.dtb or tmp / "dtb"
+        kernel = tmp / "kernel"
+        if args.append_dtb:
+            kernel = tmp / "kernel.gz-dtb"
+            kernel.write_bytes(gzip.compress((tmp / "kernel").read_bytes(), 9)
+                               + Path(dtb).read_bytes())
+        subprocess.run([
+            "mkbootimg", "--header_version", "2", "--pagesize", info(hdr, "page size"),
+            "--base", "0", "--kernel_offset", info(hdr, "kernel load address"),
+            "--ramdisk_offset", info(hdr, "ramdisk load address"),
+            "--tags_offset", info(hdr, "kernel tags load address"),
+            "--dtb_offset", info(hdr, "dtb address"),
+            "--os_version", info(hdr, "os version"),
+            "--os_patch_level", info(hdr, "os patch level"),
+            "--cmdline", info(hdr, "command line args"),
+            "--kernel", kernel, "--ramdisk", tmp / "ramdisk.new",
+            "--dtb", dtb, "--output", args.out], check=True)
+    print(args.out)
+
+
+if __name__ == "__main__":
+    main()

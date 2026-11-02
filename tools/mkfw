@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+"""Lay out the firmware a bring-up image needs, from the stock partition backups.
+
+    tools/mkfw
+
+Expects the stock modem and vendor images to be unpacked under build/fw (see the
+commands below). Writes build/fw/rootfs/lib/firmware, which tools/bk copies into the
+initramfs. This firmware is Qualcomm's and Motorola's, so it stays under build/, which
+is never committed.
+
+    debugfs -R 'rdump /image build/fw/modem' backup/stock/modem_a.img
+    lpunpack -p vendor_a backup/stock/super.img build/fw/super
+
+The vendor tree splits each signed image into a .mdt and numbered .bNN segments. Mainline
+board files name a single .mbn, so the segments are put back together here: each goes at
+the file offset its program header gives, which is the layout the image was signed in.
+"""
+import shutil
+import struct
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+MODEM = ROOT / "build/fw/modem/image"
+VENDOR_IMG = ROOT / "build/fw/super/vendor_a.img"
+OUT = ROOT / "build/fw/rootfs/lib/firmware"
+BOARD = "qcom/sm6115/motorola/borneo"
+
+# Signed images that get squashed, as (name in the vendor tree, name mainline loads)
+SQUASH = [
+    ("a610_zap", f"{BOARD}/a610_zap.mbn"),
+]
+
+# Files inside the vendor partition, as (path there, name mainline loads)
+VENDOR = [
+    ("/firmware/a630_sqe.fw", "qcom/a630_sqe.fw"),
+]
+
+ELF_MAGIC = b"\x7fELF"
+ELFCLASS32 = 1
+ELFCLASS64 = 2
+
+
+def program_headers(elf):
+    """Yields (type, offset, filesz) for each program header of a 32 or 64-bit ELF."""
+    if elf[:4] != ELF_MAGIC:
+        raise ValueError("not an ELF file")
+    elf_class = elf[4]
+    if elf_class == ELFCLASS32:
+        phoff, = struct.unpack_from("<I", elf, 28)
+        phentsize, phnum = struct.unpack_from("<HH", elf, 42)
+        for i in range(phnum):
+            p_type, p_offset, _, _, p_filesz = struct.unpack_from("<IIIII", elf, phoff + i * phentsize)
+            yield p_type, p_offset, p_filesz
+    elif elf_class == ELFCLASS64:
+        phoff, = struct.unpack_from("<Q", elf, 32)
+        phentsize, phnum = struct.unpack_from("<HH", elf, 54)
+        for i in range(phnum):
+            p_type, _, p_offset, _, _, p_filesz = struct.unpack_from("<IIQQQQ", elf, phoff + i * phentsize)
+            yield p_type, p_offset, p_filesz
+    else:
+        raise ValueError(f"unknown ELF class {elf_class}")
+
+
+def squash(name, out):
+    mdt = (MODEM / f"{name}.mdt").read_bytes()
+    image = bytearray()
+
+    def place(offset, data):
+        if len(image) < offset + len(data):
+            image.extend(bytes(offset + len(data) - len(image)))
+        image[offset:offset + len(data)] = data
+
+    place(0, mdt)
+    for i, (_, offset, filesz) in enumerate(program_headers(mdt)):
+        if not filesz:
+            continue
+        segment = MODEM / f"{name}.b{i:02d}"
+        if not segment.exists():
+            raise FileNotFoundError(f"{segment} is missing")
+        data = segment.read_bytes()
+        if len(data) != filesz:
+            raise ValueError(f"{segment} is {len(data)} bytes, its header says {filesz}")
+        place(offset, data)
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(image)
+
+
+def extract_vendor(path, out):
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.unlink(missing_ok=True)
+    subprocess.run(["debugfs", "-R", f"dump {path} {out}", str(VENDOR_IMG)],
+                   check=True, capture_output=True)
+    if not out.exists() or not out.stat().st_size:
+        raise FileNotFoundError(f"{path} is not in {VENDOR_IMG}")
+
+
+def main():
+    shutil.rmtree(OUT, ignore_errors=True)
+    for name, target in SQUASH:
+        squash(name, OUT / target)
+    for path, target in VENDOR:
+        extract_vendor(path, OUT / target)
+    for f in sorted(p for p in OUT.rglob("*") if p.is_file()):
+        print(f.stat().st_size, f.relative_to(OUT))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
