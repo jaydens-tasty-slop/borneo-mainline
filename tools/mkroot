@@ -50,6 +50,10 @@ DEFAULT = [
 # What the skipped install scripts would have done, run by the phone on first use.
 FIRST_BOOT = """#!/bin/busybox sh
 /bin/busybox --install -s
+# mke2fs -d keeps the host user's IDs. /proc, /sys and /dev are already mounted by now.
+for d in bin etc home lib media mnt opt root sbin srv usr var; do
+	chown -hR 0:0 "/$d"
+done
 rm -f /etc/first-boot
 """
 
