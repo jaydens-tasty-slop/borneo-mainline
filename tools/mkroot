@@ -50,7 +50,7 @@ DEFAULT = [
     # Audio
     "alsa-utils", "alsa-ucm-conf",
     # Modem
-    "libqmi", "dropbear-scp",
+    "qmi-utils", "dropbear-scp",
 ]
 
 # What the skipped install scripts would have done, run by the phone on first use.
