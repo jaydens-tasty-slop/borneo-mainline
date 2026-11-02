@@ -34,6 +34,16 @@ rpmsg: glink: smem: Allow messages to wake the system
 series gcc-sm6115-usb
 clk: qcom: gcc-sm6115: Use retention for USB power domain
 
+series pmdomain-fixes
+pmdomain: core: Free subdomain links outside the genpd locks
+pmdomain: core: Wait for a genpd's device links before it can be freed
+
+series smbx-epc-sem
+power: supply: qcom_smbx: Don't go through the core to read the status
+
+series ipa-modem-boot-power
+net: ipa: Keep the IPA powered while the modem boots, every time
+
 # SM6115, each independent of the board.
 
 series sm6115-dispcc-ao

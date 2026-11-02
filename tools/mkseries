@@ -7,7 +7,7 @@
   tools/mkseries --base REV ...   apply to REV instead of v7.4-rc1 (say next/master)
 
 For each series, in a throwaway worktree: cherry-pick its commits alone onto the base, strip the
-trailers upstream doesn't want, and write what comes out to build/series/NAME/ with checkpatch and
+trailer upstream doesn't want from our own commits, and write what comes out to build/series/NAME/ with checkpatch and
 get_maintainer results. A local branch send/NAME is left in linux/ for the user to review and sign
 off. Nothing is signed off and nothing is sent: that's the user's part.
 """
@@ -27,8 +27,11 @@ LIST = ROOT / "tools" / "series.list"
 DEV = "borneo/dev"
 RANGE_BASE = "v7.4-rc1"
 ME = "Jayden Milne <linux@jayd.ml>"
-# Upstream dropped Assisted-by in 1e035297ffda: tool use goes in the cover letter or changelog text.
-STRIP = re.compile(r"^(Co-Authored-By|Assisted-by):", re.I)
+# Upstream dropped these trailers in 1e035297ffda: tool use goes in the cover letter or changelog
+# text. Only the line this project adds to its own commits goes: what other authors wrote in theirs
+# is theirs to change, and not every Assisted-by there is a tool.
+STRIP = re.compile(r"^Co-Authored-By: Claude ", re.I)
+MY_EMAIL = "linux@jayd.ml"
 IDENT = {
     "GIT_COMMITTER_NAME": "Jayden Milne",
     "GIT_COMMITTER_EMAIL": "linux@jayd.ml",
@@ -128,7 +131,9 @@ def pick(hash_, env):
         git("cherry-pick", "--abort", cwd=WT, check=False)
         # No conflicted file means an empty pick: the base already has this change.
         return "conflict in " + ", ".join(files) if files else "already in the base, or: " + r.stderr.strip()[:160]
-    msg = strip_message(git("log", "-1", "--format=%B", cwd=WT).stdout)
+    msg = git("log", "-1", "--format=%B", cwd=WT).stdout
+    if git("log", "-1", "--format=%ae", cwd=WT).stdout.strip() == MY_EMAIL:
+        msg = strip_message(msg)
     p = subprocess.run(["git", "commit", "--amend", "--no-verify", "-q", "-F", "-"],
                        cwd=WT, env=dict(os.environ, **env), input=msg, text=True, capture_output=True)
     if p.returncode:

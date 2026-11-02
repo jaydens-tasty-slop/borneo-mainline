@@ -62,6 +62,14 @@ IMAGE=$OBJ/arch/arm64/boot/Image
 # The stub's header must tell the bootloader how much room the real kernel needs.
 # The kernel's own header holds that size at offset 16, and it includes its BSS.
 KERNEL_SIZE=$(od -An -t u8 -j 16 -N 8 "$IMAGE" | tr -d ' ')
+# The bootloader loads the stub at 0x40080000 and the kernel runs 2 MiB in, where it stays. It puts
+# the ramdisk at the top of that RAM block, under hyp_mem at 0x45700000, and the DTB 2 MiB below that
+# (0x45156000 with today's ramdisk). A kernel whose BSS reaches the DTB resets within seconds of
+# starting, with no log, back to fastboot.
+if ((0x40280000 + KERNEL_SIZE > 0x45000000)); then
+	echo "kernel needs $((KERNEL_SIZE >> 20)) MiB, only $(((0x45000000 - 0x40280000) >> 20)) fit below the DTB" >&2
+	exit 1
+fi
 clang --target=aarch64-linux-gnu -nostdlib -static -Wl,--no-dynamic-linker \
 	-fuse-ld=lld -DKERNEL_SIZE="$KERNEL_SIZE" -Wl,-T,"$ROOT/tools/stub/stub.lds" \
 	"$ROOT/tools/stub/stub.S" -o "$OUT/stub.elf"
