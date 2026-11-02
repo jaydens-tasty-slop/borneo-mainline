@@ -36,6 +36,7 @@ BOARD = "qcom/sm6115/motorola/borneo"
 SQUASH = [
     ("a610_zap", f"{BOARD}/a610_zap.mbn"),
     ("venus", f"{BOARD}/venus.mbn"),
+    ("ipa_fws", f"{BOARD}/ipa_fws.mbn"),
 ]
 
 # The same, but too big to be worth having in the initramfs

@@ -8,6 +8,13 @@
 # rmtfs is the modem's disk. It's given throwaway copies of the partition backups, held in
 # RAM on the phone, so nothing the modem does can reach the real modemst1/2, fsg and fsc.
 #
+# tqftpserv's read-write directory is the modem's other store, rfs/msm/mpss on the persist
+# partition under Android. The modem goes online without it, but logs "FATAL: blank dhob in
+# trusted mode", and what that costs on a real network hasn't been seen yet. So it gets the
+# same treatment as the partitions: a copy from the same backup, in RAM, mounted over the
+# directory. Those files are specific to this phone, so the copy on this host only lasts as
+# long as the push.
+#
 # build/wifi.txt holds the SSID and the password. This script passes it to the phone without
 # reading it, and nothing here may print its contents or anything derived from it: that
 # rules out the wpa_supplicant log, iw's "SSID:" lines and the generated config.
@@ -25,7 +32,20 @@ if [[ -z $(adb shell pidof rmtfs) ]]; then
 	adb push -q "$STOCK/modemst1.img" /r/run/rmtfs/modem_fs1
 	adb push -q "$STOCK/modemst2.img" /r/run/rmtfs/modem_fs2
 	adb push -q "$STOCK/fsc.img" /r/run/rmtfs/modem_fsc
-	adb push -q "$STOCK/fsg_a.img" /r/run/rmtfs/modem_fsg
+
+	rfs=$(mktemp -d)
+	trap 'rm -rf "$rfs"' EXIT
+	# The fsg partition isn't the modem's golden image here. It's a filesystem holding one
+	# gzipped image per radio variant, and Motorola's rmt_storage serves the phone's own.
+	debugfs -R "dump /borneo_nanh.img.gz $rfs/fsg.gz" "$STOCK/fsg_a.img" 2>/dev/null
+	gzip -dc "$rfs/fsg.gz" > "$rfs/modem_fsg"
+	adb push -q "$rfs/modem_fsg" /r/run/rmtfs/modem_fsg
+	debugfs -R "rdump /rfs/msm/mpss $rfs" "$STOCK/persist.img" 2>/dev/null
+	adb shell 'mkdir -p /r/run/modem-rw /r/var/lib/tqftpserv; chmod 700 /r/run/modem-rw'
+	adb push -q "$rfs/mpss/." /r/run/modem-rw/
+	rm -rf "$rfs"
+	trap - EXIT
+	adb shell chroot /r /bin/mount --bind /run/modem-rw /var/lib/tqftpserv
 fi
 
 adb shell '
