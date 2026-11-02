@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# battlog: log the battery once a minute on a phone running the dev kernel.
+#
+#   tools/battlog             start logging, if it isn't already running
+#   tools/battlog --show      print the log's last lines
+#
+# The log is a file on the microSD card, /sd/batt.log, and keeps growing across boots, which is
+# what makes a charge cycle of several hours visible around other work. Run this after each boot.
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+export ANDROID_SERIAL=${ANDROID_SERIAL:-<serial>}
+
+"$ROOT/tools/rootup" >/dev/null
+
+if [[ ${1:-} == --show ]]; then
+	adb shell 'tail -n '"${2:-20}"' /sd/batt.log'
+	exit 0
+fi
+
+adb shell '
+cat > /r/run/battlog.sh <<EOF
+#!/bin/sh
+b=/sys/class/power_supply/pmi632-battery
+c=/sys/class/power_supply/pmi632-charger
+r=/sys/kernel/debug/regmap/0-02
+echo "# boot \$(cat /proc/sys/kernel/random/boot_id)" >> /sd/batt.log
+while :; do
+	echo "\$(cut -d. -f1 /proc/uptime) \$(cat \$b/status) \$(cat \$b/voltage_now) \$(cat \$b/current_now) \$(cat \$b/temp) \$(cat \$b/capacity) \$(cat \$c/voltage_now) \$(cat \$c/current_now)" >> /sd/batt.log
+	sync
+	sleep 60
+done
+EOF
+if [ -z "$(cat /r/run/battlog.pid 2>/dev/null)" ] || [ ! -d "/proc/$(cat /r/run/battlog.pid)" ]; then
+	sh /r/run/battlog.sh >/dev/null 2>&1 &
+	echo $! > /r/run/battlog.pid
+fi
+cat /r/run/battlog.pid
+'
