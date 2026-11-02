@@ -18,7 +18,9 @@ DTB=$OBJ/arch/arm64/boot/dts/qcom/$BOARD.dtb
 # panic=0 leaves a panicking kernel spinning until the watchdog bites, the reset that's
 # proven to keep RAM and with it the log. reboot=warm makes the PMIC power key driver ask
 # for a warm reset on an ordinary reboot too. PSCI here is v1.0, so there's no RESET2.
-CMDLINE="ignore_loglevel nokaslr panic=0 oops=panic reboot=warm log_buf_len=2M printk.devkmsg=on"
+# no_console_suspend keeps pstore logging through system sleep, where a hang would otherwise
+# leave nothing behind.
+CMDLINE="ignore_loglevel nokaslr panic=0 oops=panic reboot=warm log_buf_len=2M printk.devkmsg=on no_console_suspend"
 CMDLINE+=${BK_CMDLINE:+ $BK_CMDLINE}
 
 MAKE=(make -C "$SRC" O="$OBJ" ARCH=arm64 LLVM=1 CC="ccache clang" -j"$(nproc)" -s)
