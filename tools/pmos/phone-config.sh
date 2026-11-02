@@ -78,7 +78,7 @@ glib-compile-schemas /usr/share/glib-2.0/schemas >/dev/null 2>&1
 # Enable what the packages' presets say, as pmbootstrap does, then ours.
 systemctl preset-all >/dev/null 2>&1
 systemctl enable bh-adbd.service bh-modem-files.service bh-rmtfs.service bh-tqftpserv.service \
-	bh-remoteprocs.service >/dev/null 2>&1
+	bh-remoteprocs.service bh-hexagonrpcd-resume.service >/dev/null 2>&1
 systemctl enable plasma-mobile.service NetworkManager.service ModemManager.service \
 	bluetooth.service sshd.service 2>&1 | grep -v '^Created symlink'
 systemctl set-default graphical.target >/dev/null 2>&1

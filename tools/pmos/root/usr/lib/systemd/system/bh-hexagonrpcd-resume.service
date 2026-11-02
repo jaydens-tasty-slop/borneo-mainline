@@ -1,0 +1,13 @@
+# hexagonrpcd's units stop for suspend and nothing brings them back. The sensors carry on without
+# them, but the DSP has nobody to ask for files.
+[Unit]
+Description=Restart hexagonrpcd after suspend
+After=suspend.target
+ConditionPathExists=/dev/fastrpc-adsp
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl --no-block start hexagonrpcd-adsp-rootpd.service hexagonrpcd-adsp-sensorspd.service
+
+[Install]
+WantedBy=suspend.target
