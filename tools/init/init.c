@@ -112,27 +112,55 @@ static void read_serial(char *serial, size_t size)
  * The eMMC driver probes asynchronously, so block devices may not exist yet. Wait for it
  * briefly, then write-protect the whole disk and both boot areas at the block layer.
  * Partition devices inherit this from the whole disk. Reading still works.
+ *
+ * Go by the disk's type, not its name. The DTS's aliases fix the numbering, but a kernel without
+ * them numbers the disks in the order they probe, which puts the microSD card at mmcblk0 on some
+ * boots. Protecting a name would then leave the eMMC writable.
  */
+static int find_emmc(void)
+{
+	char path[] = "/sys/block/mmcblkN/device/type";
+	char *n = strchr(path, 'N');
+
+	for (int i = 0; i < 8; i++) {
+		char type[3];
+		int fd, len;
+
+		*n = '0' + i;
+		fd = open(path, O_RDONLY, 0);
+		if (fd < 0)
+			continue;
+		len = read(fd, type, sizeof(type));
+		close(fd);
+		if (len == sizeof(type) && !memcmp(type, "MMC", sizeof(type)))
+			return i;
+	}
+	return -1;
+}
+
 static void protect_emmc(void)
 {
-	static const char *const ro[] = {
-		"/sys/block/mmcblk0/force_ro",
-		"/sys/block/mmcblk0boot0/force_ro",
-		"/sys/block/mmcblk0boot1/force_ro",
+	char ro[][40] = {
+		"/sys/block/mmcblkN/force_ro",
+		"/sys/block/mmcblkNboot0/force_ro",
+		"/sys/block/mmcblkNboot1/force_ro",
 	};
+	int emmc = -1;
 
-	for (int tries = 0; tries < 50; tries++) {
-		int fd = open(ro[0], O_RDONLY, 0);
-
-		if (fd >= 0) {
-			close(fd);
-			break;
-		}
-		msleep(100);
+	for (int tries = 0; tries < 50 && emmc < 0; tries++) {
+		emmc = find_emmc();
+		if (emmc < 0)
+			msleep(100);
+	}
+	if (emmc < 0) {
+		say("BH-INIT: NO eMMC FOUND, IT IS NOT WRITE-PROTECTED\n");
+		return;
 	}
 	for (unsigned int i = 0; i < 3; i++) {
-		int fd = open(ro[i], O_WRONLY, 0);
+		int fd;
 
+		*strchr(ro[i], 'N') = '0' + emmc;
+		fd = open(ro[i], O_WRONLY, 0);
 		if (fd < 0)
 			continue;
 		if (write(fd, "1", 1) == 1)

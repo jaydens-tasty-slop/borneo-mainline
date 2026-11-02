@@ -12,7 +12,28 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 export ANDROID_SERIAL=${ANDROID_SERIAL:-<serial>}
 
-adb shell 'mkdir -p /sd /r; grep -q " /sd " /proc/mounts || mount /dev/mmcblk1p1 /sd'
+# Find the card by what it is. The kernel may number the disks either way round, and the other
+# one is the eMMC, whose first partition is the bootloader.
+adb shell '
+mkdir -p /sd /r
+for d in /sys/block/mmcblk*; do
+	case "$(cat "$d/device/type" 2>/dev/null)" in
+	MMC)
+		if [ "$(cat "$d/ro")" != 1 ]; then
+			echo "rootup: the eMMC is writable, stopping" >&2
+			exit 1
+		fi
+		;;
+	SD)
+		grep -q " /sd " /proc/mounts || mount -t exfat "/dev/${d##*/}p1" /sd
+		;;
+	esac
+done
+if ! grep -q " /sd " /proc/mounts; then
+	echo "rootup: no card mounted" >&2
+	exit 1
+fi
+' || exit 1
 
 if [[ ${1:-} == --push ]]; then
 	adb shell 'if grep -q " /r " /proc/mounts; then umount -l /r; fi'
