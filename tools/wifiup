@@ -58,3 +58,9 @@ adb push -q "$SSH_DIR/id_ed25519.pub" /r/root/.ssh/authorized_keys
 
 adb push -q "$ROOT/tools/wifi-join.sh" /r/run/wifi/join.sh
 adb shell chroot /r /bin/sh -l /run/wifi/join.sh
+
+# On 5 GHz the phone doesn't hear broadcasts, so it can't answer ARP requests. Having it speak
+# first gives this host its address, and after that unicast works in both directions.
+ip=$(adb shell "chroot /r /bin/sh -lc 'ip -4 -o addr show wlan0'" | awk '{sub(/\/.*/, "", $4); print $4}')
+host=$(ip -4 route get "$ip" | sed -n 's/.* src \([0-9.]*\).*/\1/p')
+adb shell "chroot /r /bin/sh -lc 'ping -c 1 -W 2 $host'" >/dev/null || echo "couldn't reach this host"

@@ -44,7 +44,13 @@ DEFAULT = [
     # Qualcomm userspace services for the remote processors
     "qrtr", "rmtfs", "tqftpserv",
     # General
-    "i2c-tools", "evtest", "strace", "alsa-utils",
+    "i2c-tools", "evtest", "strace", "iperf3",
+    # Bluetooth
+    "bluez", "bluez-deprecated", "bluez-btmon",
+    # Audio
+    "alsa-utils", "alsa-ucm-conf",
+    # Modem
+    "libqmi", "dropbear-scp",
 ]
 
 # What the skipped install scripts would have done, run by the phone on first use.

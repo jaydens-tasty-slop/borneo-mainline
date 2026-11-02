@@ -11,6 +11,8 @@ which is never committed.
 
     debugfs -R 'rdump /image build/fw/modem' backup/stock/modem_a.img
     lpunpack -p vendor_a backup/stock/super.img build/fw/super
+    mkdir -p build/fw/bluetooth
+    debugfs -R 'rdump /image build/fw/bluetooth' backup/stock/bluetooth_a.img
 
 The vendor tree splits each signed image into a .mdt and numbered .bNN segments. Mainline
 board files name a single .mbn, so the segments are put back together here: each goes at
@@ -24,6 +26,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 MODEM = ROOT / "build/fw/modem/image"
+BLUETOOTH = ROOT / "build/fw/bluetooth/image"
 VENDOR_IMG = ROOT / "build/fw/super/vendor_a.img"
 OUT = ROOT / "build/fw/rootfs/lib/firmware"
 SD_OUT = ROOT / "build/fw/sd/lib/firmware"
@@ -127,6 +130,9 @@ def main():
     for name, target in SD_COPY:
         (SD_OUT / target).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(MODEM / name, SD_OUT / target)
+    for f in BLUETOOTH.glob("*"):
+        (SD_OUT / "qca").mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(f, SD_OUT / "qca" / f.name)
     for base in (OUT, SD_OUT):
         for f in sorted(p for p in base.rglob("*") if p.is_file()):
             print(f.stat().st_size, f.relative_to(base))

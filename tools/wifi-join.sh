@@ -8,6 +8,10 @@ if [ ! -e /sys/class/net/wlan0 ]; then
 	rm -f /run/wifi/creds
 	exit 1
 fi
+# ath10k makes up a new address each boot. The bootloader passes the phone's real one, which
+# also keeps the DHCP lease stable.
+mac=$(sed -n 's/.*wifimacaddr=\([0-9A-Fa-f:]\{17\}\).*/\1/p' /proc/cmdline)
+if [ -n "$mac" ]; then ip link set wlan0 address "$mac"; fi
 ip link set wlan0 up
 cr=$(printf '\r')
 {

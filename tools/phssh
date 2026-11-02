@@ -3,8 +3,8 @@
 #
 #   tools/phssh [command ...]
 #
-# The address comes from PHONE_IP, or from the phone itself over adb. The commands run in the
-# Alpine chroot only if dropbear was started there, which tools/wifiup does.
+# The address comes from PHONE_IP, or from the phone itself over adb. Host keys aren't checked,
+# because each new tools/mkroot image comes with a new one.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -14,5 +14,5 @@ export ANDROID_SERIAL=${ANDROID_SERIAL:-<serial>}
 ip=${PHONE_IP:-$(adb shell "chroot /r /bin/sh -lc 'ip -4 -o addr show wlan0'" | awk '{sub(/\/.*/, "", $4); print $4}')}
 
 exec ssh -i "$SSH_DIR/id_ed25519" -o IdentitiesOnly=yes \
-	-o UserKnownHostsFile="$SSH_DIR/known_hosts" -o StrictHostKeyChecking=accept-new \
+	-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o LogLevel=ERROR \
 	-o ConnectTimeout=8 "root@$ip" "$@"
