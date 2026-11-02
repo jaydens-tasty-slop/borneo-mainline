@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "build/root"
 CACHE = ROOT / "build/dl/alpine-pkgs"
 TREE = OUT / "tree"
-FIRMWARE = ROOT / "build/fw/rootfs/lib/firmware"
+FIRMWARE = [ROOT / "build/fw/rootfs/lib/firmware", ROOT / "build/fw/sd/lib/firmware"]
 
 MIRROR = "https://dl-cdn.alpinelinux.org/alpine/edge"
 REPOS = ["main", "community"]
@@ -40,9 +40,9 @@ DEFAULT = [
     # Video codec
     "v4l-utils", "ffmpeg",
     # WiFi, and logging in over it
-    "iw", "wpa_supplicant", "dropbear", "wireless-regdb",
+    "iw", "wpa_supplicant", "dropbear", "wireless-regdb", "linux-firmware-ath10k",
     # Qualcomm userspace services for the remote processors
-    "qrtr", "rmtfs", "pd-mapper", "tqftpserv",
+    "qrtr", "rmtfs", "tqftpserv",
     # General
     "i2c-tools", "evtest", "strace", "alsa-utils",
 ]
@@ -169,8 +169,13 @@ def main():
         (TREE / sub).mkdir(exist_ok=True)
     (TREE / "etc/first-boot").write_text(FIRST_BOOT)
     (TREE / "etc/first-boot").chmod(0o755)
-    if FIRMWARE.is_dir():
-        shutil.copytree(FIRMWARE, TREE / "lib/firmware", dirs_exist_ok=True, symlinks=True)
+    # board-2.bin holds other devices' calibration. It must not get picked over this
+    # device's own board file.
+    for f in (TREE / "lib/firmware/ath10k/WCN3990/hw1.0").glob("board-2.bin*"):
+        f.unlink()
+    for firmware in FIRMWARE:
+        if firmware.is_dir():
+            shutil.copytree(firmware, TREE / "lib/firmware", dirs_exist_ok=True, symlinks=True)
 
     image = OUT / "rootfs.ext4"
     image.unlink(missing_ok=True)

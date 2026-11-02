@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# wifiup: start the remote processors on a phone running the dev kernel, and optionally join
+# the WiFi network.
+#
+#   tools/wifiup            start the modem, ADSP and CDSP and their userspace services
+#   tools/wifiup --join     also join the network in build/wifi.txt and start sshd
+#
+# rmtfs is the modem's disk. It's given throwaway copies of the partition backups, held in
+# RAM on the phone, so nothing the modem does can reach the real modemst1/2, fsg and fsc.
+#
+# build/wifi.txt holds the SSID and the password. This script passes it to the phone without
+# reading it, and nothing here may print its contents or anything derived from it: that
+# rules out the wpa_supplicant log, iw's "SSID:" lines and the generated config.
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+export ANDROID_SERIAL=${ANDROID_SERIAL:-<serial>}
+STOCK=$ROOT/backup/stock
+SSH_DIR=$ROOT/build/ssh
+
+"$ROOT/tools/rootup" >/dev/null
+
+if [[ -z $(adb shell pidof rmtfs) ]]; then
+	adb shell mkdir -p /r/run/rmtfs
+	adb push -q "$STOCK/modemst1.img" /r/run/rmtfs/modem_fs1
+	adb push -q "$STOCK/modemst2.img" /r/run/rmtfs/modem_fs2
+	adb push -q "$STOCK/fsc.img" /r/run/rmtfs/modem_fsc
+	adb push -q "$STOCK/fsg_a.img" /r/run/rmtfs/modem_fsg
+fi
+
+adb shell '
+set -e
+printf /r/lib/firmware > /sys/module/firmware_class/parameters/path
+pidof rmtfs >/dev/null || chroot /r /usr/bin/rmtfs -o /run/rmtfs -v >/r/run/rmtfs.log 2>&1 &
+pidof tqftpserv >/dev/null || chroot /r /usr/bin/tqftpserv >/r/run/tqftpserv.log 2>&1 &
+sleep 1
+for r in /sys/class/remoteproc/remoteproc*; do
+	if [ "$(cat "$r/state")" != running ]; then
+		echo start > "$r/state" || echo "$(cat "$r/name"): failed to start"
+	fi
+	echo "$(cat "$r/name"): $(cat "$r/state")"
+done
+'
+
+if [[ ${1:-} != --join ]]; then
+	exit 0
+fi
+
+mkdir -p "$SSH_DIR"
+if [[ ! -f $SSH_DIR/id_ed25519 ]]; then
+	ssh-keygen -q -t ed25519 -N '' -C borneo-dev -f "$SSH_DIR/id_ed25519"
+fi
+
+adb shell mkdir -p /r/run/wifi /r/root/.ssh
+adb shell chmod 700 /r/run/wifi /r/root/.ssh
+adb push -q "$ROOT/build/wifi.txt" /r/run/wifi/creds
+adb push -q "$SSH_DIR/id_ed25519.pub" /r/root/.ssh/authorized_keys
+
+adb push -q "$ROOT/tools/wifi-join.sh" /r/run/wifi/join.sh
+adb shell chroot /r /bin/sh -l /run/wifi/join.sh

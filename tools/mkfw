@@ -5,8 +5,9 @@
 
 Expects the stock modem and vendor images to be unpacked under build/fw (see the
 commands below). Writes build/fw/rootfs/lib/firmware, which tools/bk copies into the
-initramfs. This firmware is Qualcomm's and Motorola's, so it stays under build/, which
-is never committed.
+initramfs, and build/fw/sd/lib/firmware for the larger images, which tools/mkroot puts on
+the microSD image. This firmware is Qualcomm's and Motorola's, so it stays under build/,
+which is never committed.
 
     debugfs -R 'rdump /image build/fw/modem' backup/stock/modem_a.img
     lpunpack -p vendor_a backup/stock/super.img build/fw/super
@@ -25,12 +26,28 @@ ROOT = Path(__file__).resolve().parent.parent
 MODEM = ROOT / "build/fw/modem/image"
 VENDOR_IMG = ROOT / "build/fw/super/vendor_a.img"
 OUT = ROOT / "build/fw/rootfs/lib/firmware"
+SD_OUT = ROOT / "build/fw/sd/lib/firmware"
 BOARD = "qcom/sm6115/motorola/borneo"
 
 # Signed images that get squashed, as (name in the vendor tree, name mainline loads)
 SQUASH = [
     ("a610_zap", f"{BOARD}/a610_zap.mbn"),
     ("venus", f"{BOARD}/venus.mbn"),
+]
+
+# The same, but too big to be worth having in the initramfs
+SD_SQUASH = [
+    ("adsp", f"{BOARD}/adsp.mbn"),
+    ("cdsp", f"{BOARD}/cdsp.mbn"),
+    ("modem", f"{BOARD}/modem.mbn"),
+]
+
+# Files that are used as they are, as (name in the vendor tree, name they're loaded by).
+# The modem asks for wlanmdsp.mbn through tqftpserv, which looks next to modem.mbn. The
+# board file is this device's WiFi calibration, for ath10k's single board file fallback.
+SD_COPY = [
+    ("wlanmdsp.mbn", f"{BOARD}/wlanmdsp.mbn"),
+    ("bdwlan_borneo_epa.bin", "ath10k/WCN3990/hw1.0/board.bin"),
 ]
 
 # Files inside the vendor partition, as (path there, name mainline loads)
@@ -104,8 +121,15 @@ def main():
         squash(name, OUT / target)
     for path, target in VENDOR:
         extract_vendor(path, OUT / target)
-    for f in sorted(p for p in OUT.rglob("*") if p.is_file()):
-        print(f.stat().st_size, f.relative_to(OUT))
+    shutil.rmtree(SD_OUT, ignore_errors=True)
+    for name, target in SD_SQUASH:
+        squash(name, SD_OUT / target)
+    for name, target in SD_COPY:
+        (SD_OUT / target).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(MODEM / name, SD_OUT / target)
+    for base in (OUT, SD_OUT):
+        for f in sorted(p for p in base.rglob("*") if p.is_file()):
+            print(f.stat().st_size, f.relative_to(base))
     return 0
 
 
