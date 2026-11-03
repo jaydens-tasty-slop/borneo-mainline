@@ -1,0 +1,7 @@
+media: qcom: camss: Add SM6115
+
+SM6115 has QCM2290's camera subsystem with a third CSIPHY, CSID and VFE. This adds the binding, the
+driver data and the SoC's device tree nodes.
+
+Tested on a Moto G Power (2021), capturing raw frames on all three CSIPHYs through RDI. The phone's
+own nodes come in a later series, as they need sensor drivers that aren't upstream yet.

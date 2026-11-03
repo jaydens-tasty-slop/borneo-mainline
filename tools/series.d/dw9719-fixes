@@ -1,0 +1,4 @@
+media: i2c: dw9719: Two small fixes
+
+A lens that resumes short of its position, and a supply left on when detection fails. The first was
+seen on a DW9767, the second is compile tested.

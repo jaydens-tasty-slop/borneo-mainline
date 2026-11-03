@@ -1,0 +1,5 @@
+media: i2c: s5k3m5, s5kjn1: Fix the crop height
+
+Both drivers report the width of the mode as the height of the crop rectangle.
+I noticed reading them as a model for a new driver, and have neither sensor, so
+these are compile tested only.

@@ -1,0 +1,4 @@
+media: i2c: dw9719: Add the DW9767 and GT9772
+
+Two more lens controllers with these registers, and an optional supply for I2C pull-ups that a board
+switches. Tested on a Moto G Power (2021).

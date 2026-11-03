@@ -49,6 +49,25 @@ leds: flash: leds-qcom-flash: Release the V4L2 flash devices properly
 series smbx-epc-sem
 power: supply: qcom_smbx: Don't go through the core to read the status
 
+series pinconf-generic-alloc
+pinctrl: pinconf-generic: Check the bitmap allocation in parse_fw_cfg()
+
+series udmabuf-seg-size
+dma-buf/udmabuf: Don't limit the misc device to 64K DMA segments
+
+series camss-fixes
+media: qcom: camss: Don't limit buffers to 64K DMA segments
+media: qcom: camss: Don't create sensor links again on a rebind
+media: qcom: camss: Don't offer to unbind through sysfs
+
+series dw9719-fixes
+media: i2c: dw9719: Go all the way back to the position on resume
+media: i2c: dw9719: Turn the supply off when detection fails
+
+series s5k-selection-height
+media: i2c: s5k3m5: Report the crop height, not the width, as the height
+media: i2c: s5kjn1: Report the crop height, not the width, as the height
+
 series ipa-modem-boot-power
 net: ipa: Keep the IPA powered while the modem boots, every time
 
@@ -115,6 +134,7 @@ Input: edt-ft5x06 - add SPI transport and FT8722 support
 Input: edt-ft5x06 - support following a DRM panel
 dt-bindings: input: touchscreen: edt-ft5x06: Add FocalTech FT8009
 Input: edt-ft5x06 - add FocalTech FT8009 support
+Input: edt-ft5x06 - stop following the panel before devres starts
 
 series charger
 hold László Lajosházi's series and its fp3 fixes: their authors need contacting
@@ -199,3 +219,43 @@ arm64: dts: qcom: sm6115-motorola-borneo: Add the codec, mics and earpiece
 arm64: dts: qcom: sm6115-motorola-borneo: Enable IPA
 arm64: dts: qcom: sm6115-motorola-borneo: Add the notification LED
 arm64: dts: qcom: sm6115-motorola-borneo: Sort nodes and properties
+
+# The cameras. Bindings, the SoC support and the drivers don't depend on the phone.
+
+series sm6115-camss
+needs camss-fixes
+dt-bindings: i2c: qcom-cci: Add SM6115
+dt-bindings: media: Add Qualcomm SM6115 CAMSS
+media: qcom: camss: Add SM6115 support
+arm64: dts: qcom: sm6115: Add CCI and CAMSS
+
+series camss-shared-csiphy
+hold Needs a view from the CAMSS maintainers on modelling a shared CSIPHY, send as RFC
+needs camss-fixes
+needs sm6115-camss
+media: qcom: camss: Allow more than one sensor on a CSIPHY
+media: qcom: camss: Add CSIPHY combo mode for QCM2290 and SM6115
+
+series borneo-sensors
+hold Waiting on the owner's decision about where the register tables and the RAM patch come from
+dt-bindings: media: i2c: Add Samsung S5KGM1ST
+media: i2c: Add a driver for the Samsung S5KGM1ST sensor
+dt-bindings: media: i2c: Add Samsung S5K4H7YX
+media: i2c: Add a driver for the Samsung S5K4H7YX sensor
+dt-bindings: media: i2c: Add OmniVision OV02B10 and OV02B1B
+media: i2c: Add a driver for the OmniVision OV02B10 and OV02B1B sensors
+
+series dw9719-more-parts
+hold Same question as borneo-sensors, for the two sets of init values
+needs dw9719-fixes
+dt-bindings: media: i2c: dw9719: Add DW9767, GT9772 and an I/O supply
+media: i2c: dw9719: Add an optional supply for the I2C pull-ups
+media: i2c: dw9719: Add the DW9767 and GT9772
+
+series borneo-cameras
+hold After the camera series above
+needs sm6115-camss
+needs camss-shared-csiphy
+needs borneo-sensors
+needs dw9719-more-parts
+arm64: dts: qcom: sm6115-motorola-borneo: Add the cameras

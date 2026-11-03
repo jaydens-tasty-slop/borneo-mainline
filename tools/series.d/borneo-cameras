@@ -1,0 +1,3 @@
+arm64: dts: qcom: sm6115-motorola-borneo: Add the cameras
+
+All four cameras and two lens controllers of the Moto G Power (2021).

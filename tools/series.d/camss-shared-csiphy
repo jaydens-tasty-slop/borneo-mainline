@@ -1,0 +1,9 @@
+media: qcom: camss: Two sensors on one CSIPHY
+
+The Moto G Power (2021) has its macro and depth cameras on one CSIPHY, in the mode where lanes 0 and 1
+form one link and lanes 2 and 3 another. Both work with these patches, one at a time.
+
+This is an RFC because of how it's modelled, which is the simplest thing that works: two endpoints on
+the port, ordinary links from the sensors to the CSIPHY's one sink pad, and only one enabled at a
+time. Streaming from both at once needs more than that, likely streams and routing on the CSIPHY, and
+may want a different starting point. It also doesn't touch the new PHY API mode.

@@ -1,0 +1,6 @@
+media: qcom: camss: Three small fixes
+
+Found while adding SM6115. The first quiets DMA-API debugging, the second stops sensor links piling
+up over rebinds, and the third closes a use-after-free on unbind while a video node is open, by not
+offering the unbind. That last one is the blunt option, and the commit says what a proper fix would
+take.
