@@ -26,6 +26,9 @@ wifi: ath10k: pci: Free the pipes when allocating them fails
 series ath10k-thermal-unregister
 wifi: ath10k: Unregister the cooling device during a firmware start
 
+series qmi-txn-lifetime
+soc: qcom: qmi: Don't use a transaction after its waiter has returned
+
 series input-pm8xxx-vib
 Input: pm8xxx-vibrator - Write the voltage's high bits
 
