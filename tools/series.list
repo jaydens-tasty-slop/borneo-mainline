@@ -64,8 +64,8 @@ series dw9719-fixes
 media: i2c: dw9719: Go all the way back to the position on resume
 media: i2c: dw9719: Turn the supply off when detection fails
 
-series v4l2-intf-null
-media: v4l2-core: Cope with not having a media interface
+series v4l2-register-media
+media: v4l2-core: Fail to register a video device without its media parts
 
 series v4l2-subdev-unregister
 media: v4l2-subdev: Don't use what unregistering clears
