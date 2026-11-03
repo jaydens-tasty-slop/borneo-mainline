@@ -29,6 +29,9 @@ wifi: ath10k: Unregister the cooling device during a firmware start
 series qmi-txn-lifetime
 soc: qcom: qmi: Don't use a transaction after its waiter has returned
 
+series serdev-tty-mutex
+serdev: ttyport: Hold tty_mutex while setting up the tty
+
 series input-pm8xxx-vib
 Input: pm8xxx-vibrator - Write the voltage's high bits
 
