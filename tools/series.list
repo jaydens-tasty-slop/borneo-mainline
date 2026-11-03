@@ -19,6 +19,13 @@ Bluetooth: hci_qca: Leave the chip off for a while before retrying
 series ath10k-assoc-bw
 wifi: ath10k: Handle a channel change before the vdev is up
 
+series ath10k-pipe-leak
+wifi: ath10k: snoc: Free the pipes when allocating them fails
+wifi: ath10k: pci: Free the pipes when allocating them fails
+
+series ath10k-thermal-unregister
+wifi: ath10k: Unregister the cooling device during a firmware start
+
 series input-pm8xxx-vib
 Input: pm8xxx-vibrator - Write the voltage's high bits
 
