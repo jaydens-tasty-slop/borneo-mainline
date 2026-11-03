@@ -67,6 +67,9 @@ media: i2c: dw9719: Turn the supply off when detection fails
 series v4l2-intf-null
 media: v4l2-core: Cope with not having a media interface
 
+series v4l2-subdev-unregister
+media: v4l2-subdev: Don't use what unregistering clears
+
 series s5k-selection-height
 media: i2c: s5k3m5: Report the crop height, not the width, as the height
 media: i2c: s5kjn1: Report the crop height, not the width, as the height
@@ -257,6 +260,7 @@ media: i2c: dw9719: Add the DW9767 and GT9772
 
 series borneo-cameras
 hold After the camera series above
+needs borneo
 needs sm6115-camss
 needs camss-shared-csiphy
 needs borneo-sensors
