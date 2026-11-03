@@ -1,0 +1,10 @@
+leds: flash: leds-qcom-flash: Fix two problems unbinding the driver
+
+Two bugs from the driver's first version, both found by unbinding it with
+lockdep and kmemleak on: the mutex goes before the LEDs do, and the loop
+releasing the V4L2 flash devices misses all of them when there's one LED.
+
+Both were tested on a PMI632, on a Moto G Power (2021), with a patch this
+series doesn't include that adds that PMIC to the driver. On plain v7.4-rc1
+they are only compile tested. Nothing here touches what the PMI632 patch
+adds, and they don't depend on it.

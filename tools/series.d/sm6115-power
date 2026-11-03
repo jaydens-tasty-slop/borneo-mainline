@@ -1,0 +1,21 @@
+arm64: dts: qcom: sm6115: Fix cluster idle and add what system sleep needs
+
+The first patch fixes the CPU cluster idle states, which firmware has been
+rejecting by the million: they don't describe states this SoC has. It
+stands alone, and has a Fixes tag.
+
+The rest add MPM and a system power domain, as QCM2290 has, and RPM master
+stats to see the result with. With these the system power state is entered,
+both from idle and in s2idle. The RPM's vlow and vmin counts stay at zero,
+so the SoC doesn't reach XO shutdown yet: on this phone the ADSP doesn't go
+idle, and until it does this can't be shown to do any good beyond that.
+
+With the system domain's parent being MPM, the PSCI domain probe defers on
+each boot, which uncovered two bugs in the genpd core. Without "pmdomain:
+core: Wait for a genpd's device links before it can be freed", from another
+series, this series exposes memory corruption on each boot. Please take
+that one first.
+
+Only tested on a Moto G Power (2021). The RB2 and OnePlus Nord N100 include
+this SoC's dtsi as well, and nothing here has been tried on them. Waking
+from a TLMM GPIO through MPM hasn't been tried either.

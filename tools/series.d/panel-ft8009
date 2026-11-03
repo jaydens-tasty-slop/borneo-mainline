@@ -1,0 +1,5 @@
+drm/panel: Add DJN FT8009 panel
+
+The 720x1600 video mode DSI LCD panel in the Motorola Moto G Power (2021).
+There's no datasheet: the command sequences and timings come from the
+vendor's device tree. Only this one panel variant has been tried.

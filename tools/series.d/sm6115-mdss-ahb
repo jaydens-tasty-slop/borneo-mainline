@@ -1,0 +1,10 @@
+arm64: dts: qcom: sm6115: Give MDSS the display AHB clock
+
+After the first runtime suspend MDSS's registers read as zero, so the
+driver doesn't set up UBWC, and compressed framebuffers come out corrupted
+on the panel after any display off and on.
+
+QCM2290's MDSS node has the same clock list and may have the same problem.
+It hasn't been tried on one, so it's left alone here.
+
+Only tested on a Moto G Power (2021), with Plasma Mobile.

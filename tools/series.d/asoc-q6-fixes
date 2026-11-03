@@ -1,0 +1,15 @@
+ASoC: qcom: Fix 24-bit PCM and a crash when the ADSP restarts
+
+Two independent fixes for the Qualcomm DSP audio drivers.
+
+The first makes 24-bit PCM audible: this driver hands the DSP 24-bit
+samples in the top of a 32-bit word and calls that S24_LE, so PipeWire's
+choice of S24_LE plays silence. It removes S24_LE from what the DAI offers,
+which is a visible change for anything that asks for it, though nothing
+asking for it can have got the right level.
+
+The second stops an ADSP crash from taking the kernel down. The system now
+survives, but the sound card doesn't come back after that crash ("failed to
+instantiate card -61"). That isn't fixed here, and the reason isn't known.
+
+Only tested on SM6115, on a Moto G Power (2021).

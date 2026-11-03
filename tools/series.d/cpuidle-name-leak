@@ -1,0 +1,9 @@
+cpuidle: Free the names of PM domains when removing them
+
+The PSCI and RISC-V SBI drivers both remove PM domains on a failed or
+deferred probe, and both forget the name dt_idle_pd_alloc() allocated.
+
+The PSCI patch is tested: kmemleak listed the 11 names on a Moto G Power
+(2021), and lists none with it. The RISC-V SBI patch is the same change and
+is compile tested only, with no RISC-V hardware to hand. They are separate
+so each can go through its own maintainer.

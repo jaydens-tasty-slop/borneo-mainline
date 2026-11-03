@@ -1,0 +1,22 @@
+pmdomain: core: Fix two problems removing a genpd
+
+Both show up when a PSCI domain probe defers and removes its domains again,
+which happens on every boot of a Moto G Power (2021) with SM6115 and an MPM
+power domain as the system domain's parent. That part of its device tree is
+in another series, so plain v7.4-rc1 doesn't reproduce these there.
+
+The first is a lockdep report, and only wrong on PREEMPT_RT. The second is
+memory corruption on any kernel: fw_devlink's links can outlive the genpd
+holding the device they point at, which has been possible since commit
+3b7b8acacf37 and shows up with SLUB debugging.
+
+There's one more report in the same area that this doesn't fix. Lockdep
+also reports "Invalid wait context" for MPM's domain, which uses a regular
+spinlock and goes through mbox_send_message() in its power_off, under the
+raw locks of the CPU domains. That is also only wrong on PREEMPT_RT. Since
+that report turns lockdep off, these were tested with a local patch that
+marks MPM's domain as a CPU domain and overrides the wait type around the
+mailbox call, neither of which is meant to go upstream.
+
+Tested with lockdep, SLUB debugging and kmemleak on, and after that with
+those off. Not tested on PREEMPT_RT, and on no other SoC.

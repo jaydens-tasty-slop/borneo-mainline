@@ -5,10 +5,11 @@
   tools/mkseries [NAME ...]       build those series (default: all not on hold)
   tools/mkseries --all            build the held series too
   tools/mkseries --base REV ...   apply to REV instead of v7.4-rc1 (say next/master)
+  tools/mkseries --build ...      also compile what each series touches, on its own
 
 For each series, in a throwaway worktree: cherry-pick its commits alone onto the base, strip the
 trailer upstream doesn't want, and write what comes out to build/series/NAME/ with checkpatch and
-get_maintainer results. A local branch send/NAME is left in linux/ for the user to review and sign
+get_maintainer results, and tools/series.d/NAME as the cover letter. A local branch send/NAME is left in linux/ for the user to review and sign
 off. Nothing is signed off and nothing is sent: that's the user's part.
 """
 import argparse
@@ -23,7 +24,9 @@ ROOT = Path(__file__).resolve().parent.parent
 LINUX = ROOT / "linux"
 OUT = ROOT / "build" / "series"
 WT = ROOT / "build" / "series-wt"
+OBJ = ROOT / "build" / "series-obj"
 LIST = ROOT / "tools" / "series.list"
+NOTES = ROOT / "tools" / "series.d"
 DEV = "borneo/dev"
 RANGE_BASE = "v7.4-rc1"
 ME = "Jayden Milne <linux@jayd.ml>"
@@ -31,6 +34,9 @@ ME = "Jayden Milne <linux@jayd.ml>"
 # text. Only the line this project adds goes: what other authors wrote is theirs to change, and not
 # every Assisted-by there is a tool.
 STRIP = re.compile(r"^Co-Authored-By: Claude ", re.I)
+TOOL_NOTE = """These patches were written with Claude Code (Claude Opus 5.5) while bringing up
+the phone, and any problems they fix were found with it. It also ran the tests described."""
+REVIEW_MARK = "*** Say what you reviewed and tested yourself, then delete this line ***"
 IDENT = {
     "GIT_COMMITTER_NAME": "Jayden Milne",
     "GIT_COMMITTER_EMAIL": "linux@jayd.ml",
@@ -163,7 +169,60 @@ def run_maintainers(d, patches):
     return len(r.stdout.splitlines())
 
 
-def build(series, name, base, log):
+def fill_cover(d, name):
+    """Put tools/series.d/NAME in the cover letter: its first line is the subject.
+
+    What the user reviewed is theirs to say, so that stays a marker they have to deal with.
+    """
+    cover = d / "0000-cover-letter.patch"
+    text = NOTES / name
+    if not cover.exists() or not text.exists():
+        return
+    subject, _, body = text.read_text().partition("\n")
+    out = cover.read_text().replace("*** SUBJECT HERE ***", subject)
+    out = out.replace("*** BLURB HERE ***", f"{body.strip()}\n\n{TOOL_NOTE}\n\n{REVIEW_MARK}")
+    cover.write_text(out)
+
+
+def run_build(d, patches):
+    """Does this series compile with only what it needs? Touched files only, W=1, defconfig."""
+    files = []
+    for p in patches:
+        for line in p.read_text(errors="replace").splitlines():
+            if line.startswith("+++ b/"):
+                files.append(line[6:])
+    objs = sorted({f[:-2] + ".o" for f in files if f.endswith(".c")})
+    yamls = sorted({f for f in files if f.endswith(".yaml") and "/bindings/" in f})
+    dts = any(f.endswith((".dts", ".dtsi")) for f in files)
+    env = dict(os.environ, PATH=os.path.expanduser("~/.local/bin") + ":" + os.environ["PATH"])
+    make = ["make", f"O={OBJ}", "ARCH=arm64", "LLVM=1", "CC=ccache clang", f"-j{os.cpu_count()}", "-s"]
+    log = []
+
+    def step(*what, cmd=make):
+        r = subprocess.run([*cmd, *what], cwd=WT, env=env, text=True, capture_output=True)
+        log.append(f"$ make {' '.join(what)}\n{r.stdout}{r.stderr}")
+        return r.returncode
+
+    bad = step("defconfig")
+    # A driver for another architecture only compiles there.
+    riscv = [o for o in objs if "riscv" in o]
+    if riscv:
+        rv = [a.replace("arm64", "riscv").replace(str(OBJ), f"{OBJ}-riscv") for a in make]
+        bad += step("defconfig", cmd=rv)
+        for o in riscv:
+            bad += bool(step("W=1", o, cmd=rv))
+    for o in set(objs) - set(riscv):
+        bad += bool(step("W=1", o))
+    for y in yamls:
+        bad += bool(step("dt_binding_check", f"DT_SCHEMA_FILES={Path(y).name}"))
+    if dts:
+        bad += bool(step("qcom/qrb4210-rb2.dtb", "qcom/sm4250-oneplus-billie2.dtb"))
+    (d / "build.txt").write_text("\n".join(log))
+    warn = sum("warning:" in chunk or "error:" in chunk for chunk in log)
+    return f"build {'FAILED ' + str(bad) if bad else 'ok'} ({warn} steps with warnings)"
+
+
+def build(series, name, base, log, do_build=False):
     sr = series[name]
     by_subject = {s: h for h, s in log}
     env = IDENT
@@ -189,11 +248,13 @@ def build(series, name, base, log):
     if n > 1:
         args.insert(1, "--cover-letter")
     git(*args, cwd=WT)
+    fill_cover(d, name)
     patches = sorted(p for p in d.glob("*.patch") if not p.name.startswith("0000-"))
     warned = run_checks(d, patches)
     people = run_maintainers(d, patches)
+    built = f", {run_build(d, patches)}" if do_build else ""
     hold = f", HOLD: {sr['hold']}" if sr["hold"] else ""
-    return f"{n} patches, checkpatch issues {warned}, {people} recipients{hold}"
+    return f"{n} patches, checkpatch issues {warned}, {people} recipients{built}{hold}"
 
 
 def main():
@@ -201,6 +262,7 @@ def main():
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--base", default=RANGE_BASE)
+    ap.add_argument("--build", action="store_true")
     ap.add_argument("names", nargs="*")
     a = ap.parse_args()
 
@@ -220,7 +282,7 @@ def main():
     git("worktree", "add", "-q", "--detach", str(WT), a.base)
     try:
         for n in names:
-            print(f"{n}: {build(series, n, a.base, log)}", flush=True)
+            print(f"{n}: {build(series, n, a.base, log, a.build)}", flush=True)
     finally:
         git("worktree", "remove", "--force", str(WT), check=False)
 

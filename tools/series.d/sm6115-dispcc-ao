@@ -1,0 +1,16 @@
+clk: qcom: dispcc-sm6115: Stop the display AHB clock holding the XO on
+
+The DSI PHY holds the display's AHB clock prepared for as long as it's
+bound, and that clock's parent is the XO, so the CPUs never vote the XO off
+in system sleep. QCM2290 solves this by using the active-only XO, and this
+does the same.
+
+The binding and the driver both keep old device trees working, and that
+fallback was tried: without the new clock the parent is the regular XO as
+before.
+
+The SoC as a whole still doesn't reach XO shutdown with this, as the ADSP
+doesn't go idle on this phone. It only removes the CPUs' vote from the
+picture.
+
+Only tested on a Moto G Power (2021), with Plasma Mobile and kmscube.

@@ -1,0 +1,11 @@
+arm64: dts: qcom: sm6115: Add IPA
+
+Tested on a Moto G Power (2021): the firmware loads and authenticates, the
+driver sees the modem start, and rmnet_ipa0 appears. No data has passed
+through it, as that takes a SIM, which is the reason to read this as "the
+driver comes up" and no more than that.
+
+On this SoC, restarting the modem with the IPA runtime suspended freezes
+the whole system, which "net: ipa: Keep the IPA powered while the modem
+boots, every time" fixes. That's sent separately to netdev, and is needed
+before this is safe to use with modem restarts.
