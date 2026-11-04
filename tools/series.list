@@ -35,6 +35,11 @@ serdev: ttyport: Hold tty_mutex while setting up the tty
 series fastrpc-remove-lock
 misc: fastrpc: Don't take a user's lock under the channel's
 
+series fastrpc-interrupted
+needs fastrpc-remove-lock
+hold Anandu Krishnan E's patch: v2 was asked to rebase and they promised a new version. Report the crash, v2's dropped reference and this version to them first, rather than racing them
+misc: fastrpc: Don't send an interrupted call to the DSP again
+
 series sm6115-adsp-lpi-votes
 remoteproc: qcom_q6v5_pas: Hold the LPI domains while the SM6115 ADSP boots
 arm64: dts: qcom: sm6115: Name the ADSP's power domains
@@ -90,6 +95,7 @@ series camss-fixes
 media: qcom: camss: Don't limit buffers to 64K DMA segments
 media: qcom: camss: Don't create sensor links again on a rebind
 media: qcom: camss: Don't offer to unbind through sysfs
+media: qcom: camss: Prepare the shared clocks only while in use
 
 series dw9719-fixes
 media: i2c: dw9719: Go all the way back to the position on resume
