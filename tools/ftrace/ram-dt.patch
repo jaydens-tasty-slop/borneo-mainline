@@ -1,0 +1,26 @@
+diff --git a/arch/arm64/boot/dts/qcom/sm6115-motorola-borneo.dts b/arch/arm64/boot/dts/qcom/sm6115-motorola-borneo.dts
+index e85dde7447e8..fb932a0a3597 100644
+--- a/arch/arm64/boot/dts/qcom/sm6115-motorola-borneo.dts
++++ b/arch/arm64/boot/dts/qcom/sm6115-motorola-borneo.dts
+@@ -237,7 +237,7 @@ ramoops@af000000 {
+ 			no-map;
+ 			record-size = <0x3f800>;
+ 			console-size = <0x40000>;
+-			pmsg-size = <0x40000>;
++			ftrace-size = <0x40000>;
+ 		};
+ 	};
+ 
+diff --git a/fs/pstore/ram.c b/fs/pstore/ram.c
+index aa056d0395a4..8f59d574bd92 100644
+--- a/fs/pstore/ram.c
++++ b/fs/pstore/ram.c
+@@ -807,7 +807,7 @@ static int ramoops_probe(struct platform_device *pdev)
+ 				: 1;
+ 	err = ramoops_init_przs("ftrace", dev, cxt, &cxt->fprzs, &paddr,
+ 				cxt->ftrace_size, -1,
+-				&cxt->max_ftrace_cnt, LINUX_VERSION_CODE,
++				&cxt->max_ftrace_cnt, 0,
+ 				(cxt->flags & RAMOOPS_FLAG_FTRACE_PER_CPU)
+ 					? PRZ_FLAG_NO_LOCK : 0);
+ 	if (err)

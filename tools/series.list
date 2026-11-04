@@ -32,6 +32,24 @@ soc: qcom: qmi: Don't use a transaction after its waiter has returned
 series serdev-tty-mutex
 serdev: ttyport: Hold tty_mutex while setting up the tty
 
+series fastrpc-remove-lock
+misc: fastrpc: Don't take a user's lock under the channel's
+
+series sm6115-adsp-lpi-votes
+remoteproc: qcom_q6v5_pas: Hold the LPI domains while the SM6115 ADSP boots
+arm64: dts: qcom: sm6115: Name the ADSP's power domains
+arm64: dts: qcom: agatti: Name the ADSP's power domains
+
+series lpass-dsp-restart
+needs asoc-q6-fixes
+needs sm6115-adsp-lpi-votes
+hold RFC first: crosses PM, SoundWire, ASoC and pinctrl, so the design needs the maintainers' view, and a debugfs crash during a stream still resets the phone
+PM: clk: Report a clock that fails to enable
+soundwire: qcom: Don't touch the controller without its clock
+ASoC: qcom: qdsp6: Keep the audio clocks across a DSP restart
+pinctrl: qcom: lpass-lpi: Restore the pins after a DSP restart
+soundwire: qcom: Set the controller up again after a DSP restart
+
 series input-pm8xxx-vib
 Input: pm8xxx-vibrator - Write the voltage's high bits
 
