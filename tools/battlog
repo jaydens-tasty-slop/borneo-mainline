@@ -9,7 +9,7 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-export ANDROID_SERIAL=${ANDROID_SERIAL:-<serial>}
+source "$ROOT/tools/serial.sh"
 
 "$ROOT/tools/rootup" >/dev/null
 

@@ -3,7 +3,7 @@
 # Without the secrets, which only tools/mkpmos handles.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
-export ANDROID_SERIAL=${ANDROID_SERIAL:-<serial>}
+source "$ROOT/tools/serial.sh"
 mkdir -p "$ROOT/build/pmos"
 tar -C "$ROOT/tools/pmos/root" --owner=0 --group=0 -cf "$ROOT/build/pmos/config.tar" .
 adb push -q "$ROOT/build/pmos/config.tar" /tmp/config.tar

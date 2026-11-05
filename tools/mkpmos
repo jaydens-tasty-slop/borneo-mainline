@@ -12,7 +12,7 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-export ANDROID_SERIAL=${ANDROID_SERIAL:-<serial>}
+source "$ROOT/tools/serial.sh"
 KEYS=$ROOT/build/dl/pmos-index/keys
 OUT=$ROOT/build/pmos
 FW=$ROOT/build/fw

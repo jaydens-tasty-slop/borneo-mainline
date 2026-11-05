@@ -10,7 +10,7 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-export ANDROID_SERIAL=${ANDROID_SERIAL:-<serial>}
+source "$ROOT/tools/serial.sh"
 
 # Find the card by what it is. The kernel may number the disks either way round, and the other
 # one is the eMMC, whose first partition is the bootloader.

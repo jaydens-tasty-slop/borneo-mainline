@@ -21,8 +21,22 @@ BACKUP = ROOT / "backup"
 
 # Other Android devices may be on this host. adb and fastboot both honour
 # ANDROID_SERIAL, so setting it pins every command below to the borneo unit and a
-# flash can't reach anything else. state() also ignores other serials.
-SERIAL = "<serial>"
+# flash can't reach anything else. state() also ignores other serials. The serial
+# isn't kept in this repository: it comes from build/serial, which git ignores, or
+# failing that from the environment. With neither, stop rather than reach whatever
+# happens to be plugged in.
+def phone_serial():
+    try:
+        serial = (ROOT / "build" / "serial").read_text().strip()
+    except OSError:
+        serial = ""
+    serial = serial or os.environ.get("ANDROID_SERIAL", "")
+    if not serial:
+        sys.exit("bh: put the phone's serial in build/serial, or set ANDROID_SERIAL")
+    return serial
+
+
+SERIAL = phone_serial()
 os.environ["ANDROID_SERIAL"] = SERIAL
 
 # The only partitions a harness command may ever write. This is an allow-list

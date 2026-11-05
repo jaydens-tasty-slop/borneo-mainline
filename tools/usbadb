@@ -18,7 +18,22 @@ import os
 import struct
 import sys
 
-SERIAL = "<serial>"
+
+def phone_serial():
+    """From build/serial, which git ignores, or failing that the environment. Never a guess."""
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "build", "serial")
+    try:
+        with open(path) as f:
+            serial = f.read().strip()
+    except OSError:
+        serial = ""
+    serial = serial or os.environ.get("ANDROID_SERIAL", "")
+    if not serial:
+        sys.exit("usbadb: put the phone's serial in build/serial, or set ANDROID_SERIAL")
+    return serial
+
+
+SERIAL = phone_serial()
 BULK = 0xc0185502
 CONTROL = 0xc0185500
 CLAIM = 0x8004550f

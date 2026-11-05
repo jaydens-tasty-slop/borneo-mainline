@@ -21,7 +21,7 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-export ANDROID_SERIAL=${ANDROID_SERIAL:-<serial>}
+source "$ROOT/tools/serial.sh"
 STOCK=$ROOT/backup/stock
 SSH_DIR=$ROOT/build/ssh
 

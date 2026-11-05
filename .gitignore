@@ -3,3 +3,7 @@
 /runs/
 /linux/
 /build/
+
+# Held back until the owner has decided about the cameras' register tables.
+/tools/series.d/borneo-sensors
+__pycache__/
